@@ -1,5 +1,6 @@
 import torch
 from torch.utils.data import Dataset
+from torch import Tensor
 
 class txnDataset(Dataset):
     """
@@ -60,16 +61,16 @@ class txnDataset(Dataset):
       return len(self.examples)
 
     def __getitem__(self, idx: int) -> tuple[
-        dict[str, torch.Tensor],  # inputs  (sequences)
-        dict[str, torch.Tensor],  # cat targets (scalars)
-        dict[str, torch.Tensor],  # cont targets (scalars)
+        dict[str, Tensor],  # inputs  (sequences)
+        dict[str, Tensor],  # cat targets (scalars)
+        dict[str, Tensor],  # cont targets (scalars)
     ]:
       """
       Returns one training sample as tensors.
       """
       raw = self.examples[idx]
 
-      inputs: dict[str, torch.Tensor] = {}
+      inputs: dict[str, Tensor] = {}
       for k in self.cat_fields:
         inputs[k] = torch.tensor(raw[k], dtype=torch.long)
       for k in self.cont_fields:
