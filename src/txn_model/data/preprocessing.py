@@ -3,11 +3,14 @@ import pandas as pd
 from sklearn.preprocessing import StandardScaler
 from sklearn.preprocessing import LabelEncoder
 
-def preprocessing(file: str,
-                  cols_to_drop: list[str] = None,
-                  date_features: list[str] = None,
-                  cat_fields: list[str] = None
-      ) -> tuple[pd.DataFrame, dict[str, LabelEncoder]]:
+from typing import Optional
+
+def preprocessing(
+    file: str,
+    cols_to_drop: Optional[list[str]] = None,
+    date_features: Optional[list[str]] = None,
+    cat_fields: Optional[list[str]] = None
+) -> tuple[pd.DataFrame, dict[str, LabelEncoder]]:
   """
   Takes a csv file path and a list of columns to ignore as
   input and outputs fully processed data ready to be used in a txnDataset.

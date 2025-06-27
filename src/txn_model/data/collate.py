@@ -1,19 +1,20 @@
 import torch
 from torch.nn.utils.rnn import pad_sequence
+from torch import Tensor
 
 def collate_fn(
   batch: list[
         tuple[
-            dict[str, torch.Tensor],   # inputs_dict
-            dict[str, torch.Tensor],   # target_cat_dict
-            dict[str, torch.Tensor]    # target_cont_dict
+            dict[str, Tensor],   # inputs_dict
+            dict[str, Tensor],   # target_cat_dict
+            dict[str, Tensor]    # target_cont_dict
         ]
     ]
 ) -> tuple[
-    dict[str, torch.Tensor],       # batch_inputs
-    dict[str, torch.Tensor],       # batch_targets_cat
-    dict[str, torch.Tensor],       # batch_targets_cont
-    torch.BoolTensor               # padding_mask
+    dict[str, Tensor],       # batch_inputs
+    dict[str, Tensor],       # batch_targets_cat
+    dict[str, Tensor],       # batch_targets_cont
+    Tensor             # padding_mask
 ]:
     """
     Args:
@@ -60,7 +61,7 @@ def collate_fn(
 
 
     # Pad all training tensors to maximum length with 0s
-    batch_inputs: dict[str, torch.tensor] = {
+    batch_inputs: dict[str, Tensor] = {
         key: pad_sequence(
            [sample[0][key] for sample in batch],
            batch_first=True,
@@ -70,13 +71,13 @@ def collate_fn(
     }
   
     # Collect categorical labels into a tensor
-    batch_tgts_cat: dict[str, torch.tensor] = {
+    batch_tgts_cat: dict[str, Tensor] = {
       key: torch.stack([sample[1][key] for sample in batch], dim=0)
       for key in tgt_cat_keys
     }
 
     # Collect continuous labels into a tensor
-    batch_tgts_cont: dict[str, torch.tensor] = {
+    batch_tgts_cont: dict[str, Tensor] = {
       key: torch.stack([sample[2][key] for sample in batch], dim=0)
       for key in tgt_cont_keys
     }
