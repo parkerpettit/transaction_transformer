@@ -43,4 +43,4 @@ def build_train_examples(
         for field in cont_fields:
           ex[f'tgt_cont_{field}'] = next[field]
         examples.append(ex)
-      return examples
+    return examples
