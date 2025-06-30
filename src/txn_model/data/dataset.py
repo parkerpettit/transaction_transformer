@@ -3,7 +3,9 @@ from torch.utils.data import Dataset
 from torch import Tensor
 import numpy as np
 import pandas as pd
-class txnDataset(Dataset):
+
+
+class TxnDataset(Dataset):
     """
     Dataset for sequence‑to‑next‑row training on transaction data, generating each prefix on-the-fly.
 
