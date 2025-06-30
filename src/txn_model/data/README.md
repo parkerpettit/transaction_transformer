@@ -10,8 +10,8 @@
      "transactions.csv",
      cols_to_drop=[...],
      date_features=["unix_trans_time"],
-     cat_fields=[...],
-     cont_fields=[...]
+     cat_features=[...],
+     cont_features=[...]
    )
    ```
 
@@ -22,8 +22,8 @@
    ds = TxnDataset(
      df=df,
      group_key="cc_num",
-     cat_fields=[...],
-     cont_fields=[...],
+     cat_features=[...],
+     cont_features=[...],
      max_len=256  # optional
    )
    ```
@@ -47,4 +47,4 @@
 ---
 
 * Use `encoders` at inference to map IDs back to original labels.
-* Adjust `max_len`, `batch_size`, and fields lists as needed.
+* Adjust `max_len`, `batch_size`, and features lists as needed.
