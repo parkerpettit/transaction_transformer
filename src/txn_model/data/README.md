@@ -1,70 +1,121 @@
-# `data/` Module
+````markdown
+# data/ Module
 
-This folder contains everything you need to turn raw CSV transaction data into mini‑batches ready for training your Transformer.  The high‑level pipeline is:
+Turn raw CSV transactions into Transformer-ready mini-batches in four simple steps.
 
-1. **Preprocessing** (`preprocessing.py`)
+## 1. Preprocessing (`preprocessing.py`)
 
-   - Read your CSV into a Pandas DataFrame.
-   - Drop irrelevant columns, convert date fields to numerical features, and apply `LabelEncoder` to your categorical fields.
-   - Returns:
-     - `df_processed` (`pd.DataFrame`): all features numeric and ready for sequence building.
-     - `encoders` (`dict[str, LabelEncoder]`): mapping from feature names to fitted encoders (for reverse lookup or inference).
+- **Input:** Raw CSV with dates, categories, amounts, etc.
+- **Actions:**
+  1. Drop unused columns.
+  2. Convert date/timestamp columns to numeric features.
+  3. Fit & apply `LabelEncoder` to each categorical field.
+- **Output:**
+  - `df_processed` (sorted `pd.DataFrame` with only numeric columns)
+  - `encoders` (`dict[str, LabelEncoder]`) for each categorical field
 
-2. **Build Examples** (`build_examples.py`)
+## 2. Dataset (`dataset.py`)
 
-   - Call `build_train_examples(df_processed, group_key, cat_fields, cont_fields)` to turn each user’s transaction history into a list of training examples.
-   - Each example is a `dict` containing:
-     - `cat_<field>` / `cont_<field>` → lists of past values (the context sequence).
-     - `tgt_cat_<field>` / `tgt_cont_<field>` → the next-transaction targets (scalars).
+**Class:** `TxnDataset`
 
-3. **Dataset** (`dataset.py`)
+```python
+TxnDataset(
+    df: pd.DataFrame,            # sorted by group_key then time
+    group_key: str,             # e.g. "cc_num"
+    cat_fields: list[str],
+    cont_fields: list[str],
+    max_len: int | None = None  # history window (optional)
+)
+````
 
-   - Wrap the list of example dicts in `TxnDataset`, a standard PyTorch `Dataset` with `__len__` and `__getitem__`.
+* **Initialization:**
 
-4. **Batching**
+  1. Reset DataFrame index for contiguous slicing.
+  2. Convert `cat_fields` → `cat_array` (shape `[T, C]`).
+     Convert `cont_fields` → `cont_array` (shape `[T, F]`).
+  3. Record `group_starts` & `group_lengths` for each user/card.
+  4. Build `cum_counts` so `__getitem__` can map sample index → (card, time-step).
+* **`__getitem__(idx)`:**
 
-   - **Sampler** (`samplers.py`)
-     - Use `AutoBucketSampler` (or a custom `BucketBatchSampler`) to group sequences of similar lengths into the same proto‑buckets, minimizing padding.
-   - **Collate Function** (`collate.py`)
-     - Pass `collate_fn` to your `DataLoader` to:
-       1. Pad all variable‑length sequences in the batch to the maximum length.
-       2. Build a boolean padding mask.
-       3. Stack scalar targets into `(batch_size,)` tensors.
+  * Determine `group_id` & local step `t` via `cum_counts`.
+  * Compute slice indices:
 
-5. **DataLoader**
+    ```python
+    base = group_starts[group_id]
+    seq_end = base + t + 1
+    left = max(base, seq_end - max_len) if max_len else base
+    ```
+  * Slice:
 
-   ```python
-   from torch.utils.data import DataLoader
-   from txn_model.data.dataset import TxnDataset
-   from txn_model.data.collate import collate_fn
-   from txn_model.data.samplers import AutoBucketSampler
+    * `cat_context = cat_array[left:seq_end]` → `[seq_len, C]`
+    * `cont_context = cont_array[left:seq_end]` → `[seq_len, F]`
+    * `cat_target = cat_array[seq_end]` → `[C]`
+    * `cont_target = cont_array[seq_end]` → `[F]`
+  * Return:
 
-   # 1) Preprocess
-   df_processed, encoders = preprocessing('transactions.csv', cols_to_drop=..., date_features=..., cat_fields=...)
+    ```python
+    inputs = {"cat": cat_context, "cont": cont_context}
+    targets = {"tgt_cat": cat_target, "tgt_cont": cont_target}
+    ```
 
-   # 2) Build examples
-   examples = build_train_examples(df_processed, group_key='cc_num', cat_fields=..., cont_fields=...)
+## 3. Collation (`collate.py`)
 
-   # 3) Dataset
-   ds = TxnDataset(examples)
+**Function:** `collate_fn(batch)`
 
-   # 4) Sampler
-   lengths = [ len(ex['cat_merchant_id']) for ex in examples ]
-   sampler = AutoBucketSampler(lengths, batch_size=32, bucket_size_multiplier=50)
+* **Input:** list of `(inputs, targets)` pairs from `__getitem__`.
+* **Process:**
 
-   # 5) DataLoader
-   loader = DataLoader(
-       ds,
-       batch_sampler=sampler,
-       collate_fn=collate_fn
-   )
-   ```
+  1. Extract and pad `inputs["cat"]` & `inputs["cont"]` → `[B, max_seq, C]`, `[B, max_seq, F]`.
+  2. Stack `targets["tgt_cat"]` → `[B, C]`; `targets["tgt_cont"]` → `[B, F]`.
+  3. Build boolean `padding_mask` of shape `[B, max_seq]`.
+* **Output:**
 
----
+  ```python
+  batch_inputs:  {"cat": Tensor[B, max_seq, C], "cont": Tensor[B, max_seq, F]}
+  batch_targets: {"tgt_cat": Tensor[B, C], "tgt_cont": Tensor[B, F]}
+  padding_mask:  BoolTensor[B, max_seq]
+  ```
 
-**Tips:**
+## 4. DataLoader Setup
 
-- You don’t need to write separate column‑mapping code—`preprocessing.py` returns the encoders you’ll need to translate numeric IDs back to labels at inference time.
-- Adjust the `bucket_size_multiplier` to balance padding efficiency vs. within‑batch randomness.
-- If you update field names or add new features, just update the argument lists in the preprocessing and example‑building calls.
+```python
+from torch.utils.data import DataLoader
+from data.preprocessing import preprocess
+from data.dataset import TxnDataset
+from data.collate import collate_fn
 
+# 1) Preprocess
+df_processed, encoders = preprocess(
+    "transactions.csv",
+    cols_to_drop=[...],
+    date_features=["unix_trans_time"],
+    cat_fields=["merchant_id", "category_id", ...],
+)
+
+# 2) Dataset
+ds = TxnDataset(
+    df=df_processed,
+    group_key="cc_num",
+    cat_fields=[...],
+    cont_fields=[...],
+    max_len=256,  # optional window
+)
+
+# 3) DataLoader
+loader = DataLoader(
+    ds,
+    batch_size=64,
+    shuffle=True,
+    num_workers=4,
+    pin_memory=True,
+    collate_fn=collate_fn,
+)
+```
+
+**Notes:**
+
+* Use `encoders` at inference to map IDs back to labels.
+* Update `cat_fields`/`cont_fields` lists when adding/removing features.
+
+```
+```
