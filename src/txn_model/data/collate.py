@@ -3,95 +3,71 @@ from torch.nn.utils.rnn import pad_sequence
 from torch import Tensor
 
 def collate_fn(
-  batch: list[
+    batch: list[
         tuple[
-            dict[str, Tensor],   # inputs_dict
-            dict[str, Tensor],   # target_cat_dict
-            dict[str, Tensor]    # target_cont_dict
+            dict[str, Tensor],  # inputs: {"cat": [seq,C], "cont": [seq,F]}
+            dict[str, Tensor],  # targets: {"tgt_cat": [C], "tgt_cont": [F]}
         ]
     ]
 ) -> tuple[
-    dict[str, Tensor],       # batch_inputs
-    dict[str, Tensor],       # batch_targets_cat
-    dict[str, Tensor],       # batch_targets_cont
-    Tensor             # padding_mask
+    dict[str, Tensor],  # batch_inputs: {"cat": [B, max_seq, C], "cont": [B, max_seq, F]}
+    dict[str, Tensor],  # batch_targets: {"tgt_cat": [B, C], "tgt_cont": [B, F]}
+    Tensor              # padding_mask: [B, max_seq]
 ]:
     """
-    Args:
-        batch (list of tuples):  
-            Each element in the list is one training example, represented as a 3-tuple:
-            
-            - inputs_dict (dict[str, Tensor]):  
-              Maps each input field name (e.g. "cat_merchant_id", "cont_amt", …) to a 1D Tensor
-              of variable length (the transaction history for that feature).
+    Collate a list of transaction-sequence examples into a padded batch.
 
-            - target_cat_dict (dict[str, Tensor]):  
-              Maps each categorical target field name (e.g. "tgt_cat_merchant_id") to a scalar
-              LongTensor holding the next-transaction category ID.
+    Each element of 'batch' is a tuple (inputs, targets), where:
+      - inputs is a dict with
+          "cat":   LongTensor [seq_len, C]  (categorical feature sequences)
+          "cont":  FloatTensor [seq_len, F]  (continuous feature sequences)
+      - targets is a dict with
+          "tgt_cat":  LongTensor [C]         (categorical next-txn features)
+          "tgt_cont": FloatTensor [F]        (continuous next-txn features)
 
-            - target_cont_dict (dict[str, Tensor]):  
-              Maps each continuous target field name (e.g. "tgt_cont_amt") to a scalar
-              FloatTensor holding the next-transaction value.
-
-    Returns:
-        batch_inputs (dict[str, Tensor]):  
-            Same keys as inputs_dict, but each Tensor is now of shape
-            (batch_size, max_seq_len), padded to the longest sequence in the batch.
-
-        batch_tgts_cat (dict[str, Tensor]):  
-            Same keys as target_cat_dict, but each Tensor is of shape (batch_size,).
-
-        batch_tgts_cont (dict[str, Tensor]):  
-            Same keys as target_cont_dict, but each Tensor is of shape (batch_size,).
-
-        padding_mask (BoolTensor):  
-            A mask of shape (batch_size, max_seq_len) where True indicates real data
-            and False indicates padding positions.
+    This function will:
+      1. Stack all target tensors into shape [B, C] and [B, F].
+      2. Pad each variable-length sequence in 'cat' and 'cont' up to
+         the batch's maximum sequence length (max_seq), producing:
+           cat_padded  -> LongTensor  [B, max_seq, C]
+           cont_padded -> FloatTensor [B, max_seq, F]
+      3. Build a boolean 'padding_mask' of shape [B, max_seq], where
+         True indicates a real token and False indicates padding.
+      4. Return three values:
+           - batch_inputs:  {"cat": cat_padded, "cont": cont_padded}
+           - batch_targets: {"tgt_cat": tgt_cat_batch, "tgt_cont": tgt_cont_batch}
+           - padding_mask:  BoolTensor [B, max_seq]
     """
+    # 1) unpack
+    cat_seqs  = [sample[0]["cat"]  for sample in batch]   # list of [seq_i, C]
+    cont_seqs = [sample[0]["cont"] for sample in batch]   # list of [seq_i, F]
+    tgt_cat   = torch.stack([sample[1]["tgt_cat"] for sample in batch], dim=0)  # [B, C]
+    tgt_cont  = torch.stack([sample[1]["tgt_cont"] for sample in batch], dim=0) # [B, F]
 
-    input_keys = list(batch[0][0].keys())
-    tgt_cat_keys = list(batch[0][1].keys())
-    tgt_cont_keys = list(batch[0][2].keys())
-    rep_key = input_keys[0]   # for length/truncation
+    # 2) pad the variable-length sequences to the same max_seq length
+    #    pad_sequence will output [B, max_seq, *feature_dim]
+    cat_padded  = pad_sequence(cat_seqs,  batch_first=True, padding_value=0)  # long
+    cont_padded = pad_sequence(cont_seqs, batch_first=True, padding_value=0.0) # float
 
-    rep_seqs = [sample[0][rep_key] for sample in batch]
-    lengths = [len(s) for s in rep_seqs]
-    max_seq_len = max(lengths)
-    batch_size = len(batch)
-
-
-    # Pad all training tensors to maximum length with 0s
-    batch_inputs: dict[str, Tensor] = {
-        key: pad_sequence(
-           [sample[0][key] for sample in batch],
-           batch_first=True,
-           padding_value=0
-        )
-        for key in input_keys                                
-    }
-  
-    # Collect categorical labels into a tensor
-    batch_tgts_cat: dict[str, Tensor] = {
-      key: torch.stack([sample[1][key] for sample in batch], dim=0)
-      for key in tgt_cat_keys
-    }
-
-    # Collect continuous labels into a tensor
-    batch_tgts_cont: dict[str, Tensor] = {
-      key: torch.stack([sample[2][key] for sample in batch], dim=0)
-      for key in tgt_cont_keys
-    }
-
-    # Create padding mask
-    device = next(iter(batch_inputs.values())).device
+    # 3) build padding mask
+    lengths = [seq.size(0) for seq in cat_seqs]  # original seq lengths
+    B, max_seq, _ = cat_padded.size()
+    device = cat_padded.device
     lengths_tensor = torch.tensor(lengths, device=device)
-    idx = torch.arange(max_seq_len, device=device).unsqueeze(0).expand(batch_size, -1)
-    padding_mask = (idx < lengths_tensor.unsqueeze(1)) # true where there's real tokens, false where padded
+    idxs = torch.arange(max_seq, device=device).unsqueeze(0).expand(B, -1)
+    padding_mask = idxs < lengths_tensor.unsqueeze(1)  # True for real tokens
 
-    return batch_inputs, batch_tgts_cat, batch_tgts_cont, padding_mask
+    # 4) assemble batch dicts
+    batch_inputs = {
+        "cat":  cat_padded,   # [B, max_seq, C]
+        "cont": cont_padded,  # [B, max_seq, F]
+    }
+    batch_targets = {
+        "tgt_cat":  tgt_cat,   # [B, C]
+        "tgt_cont": tgt_cont,  # [B, F]
+    }
 
-
-
+    return batch_inputs, batch_targets, padding_mask
 
 
 
