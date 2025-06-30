@@ -9,7 +9,7 @@ def preprocessing(
     file: str,
     cols_to_drop: Optional[list[str]] = None,
     date_features: Optional[list[str]] = None,
-    cat_fields: Optional[list[str]] = None
+    cat_features: Optional[list[str]] = None
 ) -> tuple[pd.DataFrame, dict[str, LabelEncoder]]:
   """
   Takes a csv file path and a list of columns to ignore as
@@ -18,11 +18,15 @@ def preprocessing(
     - cols_to_drop: list of names of cols to drop
     - date_features: are the names of columns that contain dates to be
       converted to unix time and then standardized.
-    - cat_fields: a list of categorical fields to be encoded
+    - cat_features: a list of categorical features to be encoded
   """
+  # to ensure no mutations across calls
+  cols_to_drop   = list(cols_to_drop or [])
+  date_features  = list(date_features or [])
+  cat_features     = list(cat_features or [])
+
   data = pd.read_csv(file)
   # drop meaningless or sensitive data
-
   raw = data[data['is_fraud'] == 0].copy() # dont include fraud points
   if cols_to_drop:
     raw.drop(columns=cols_to_drop, inplace=True)
@@ -49,8 +53,6 @@ def preprocessing(
 
       return df
 
-
-
   raw = add_birthday_features(raw)
   if date_features:
     for feat in date_features:
@@ -74,14 +76,11 @@ def preprocessing(
 
 
   encoders: dict[str, LabelEncoder] = {}
-  if cat_fields:
-    for col in cat_fields:
+  if cat_features:
+    for col in cat_features:
       le = LabelEncoder()
-      raw[col] = raw[col].astype(str)
-      raw[f"{col}_id"] = le.fit_transform(raw[col])
+      raw[col] = le.fit_transform(raw[col].astype(str))
       encoders[col] = le
-    raw.drop(columns=cat_fields, inplace=True)
 
   sorted = raw.sort_values(by=["cc_num", "unix_trans_time"])
   return sorted, encoders
-
