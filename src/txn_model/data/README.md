@@ -32,19 +32,36 @@
 
    ```python
    from torch.utils.data import DataLoader
-   from data.collate import collate_fn
+   from txn_model.data.dataset import TxnDataset
+   from txn_model.data.collate import collate_fn
+   from txn_model.data.samplers import AutoBucketSampler
 
+   # 1) Preprocess
+   df_processed, encoders = preprocessing('transactions.csv', cols_to_drop=..., date_features=..., cat_fields=...)
+
+   # 2) Build examples
+   examples = build_train_examples(df_processed, group_key='cc_num', cat_fields=..., cont_fields=...)
+
+   # 3) Dataset
+   ds = TxnDataset(examples)
+
+   # 4) Sampler
+   lengths = [ len(ex['cat_merchant_id']) for ex in examples ]
+   sampler = AutoBucketSampler(lengths, batch_size=32, bucket_size_multiplier=50)
+
+   # 5) DataLoader
    loader = DataLoader(
-     ds,
-     batch_size=64,
-     shuffle=True,
-     collate_fn=collate_fn
+       ds,
+       batch_sampler=sampler,
+       collate_fn=collate_fn
    )
    ```
 
-4. **Train**  Iterate over `loader` to get `(inputs, targets, mask)` batches.
-
 ---
 
-* Use `encoders` at inference to map IDs back to original labels.
-* Adjust `max_len`, `batch_size`, and features lists as needed.
+**Tips:**
+
+- You don’t need to write separate column‑mapping code—`preprocessing.py` returns the encoders you’ll need to translate numeric IDs back to labels at inference time.
+- Adjust the `bucket_size_multiplier` to balance padding efficiency vs. within‑batch randomness.
+- If you update field names or add new features, just update the argument lists in the preprocessing and example‑building calls.
+
