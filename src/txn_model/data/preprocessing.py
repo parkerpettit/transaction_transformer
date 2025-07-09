@@ -1,197 +1,90 @@
-import numpy as np
 import pandas as pd
+import numpy as np
 from sklearn.preprocessing import StandardScaler
-from typing import List, Dict, Tuple, Optional, Union
-
-
-def split_df_per_card(
-    df: pd.DataFrame,
-    group_key: str = "User",
-    train_frac: float = 0.70,
-    val_frac: float = 0.15,
-    seed: int = 42
-) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """
-    Chronologically split each card's history into train/val/test sets.
-    """
-    train_idx, val_idx, test_idx = [], [], []
-    time_cols = ['Year','Month','Day','Hour']       
-
-    for card, g in df.groupby(by=group_key, sort=False):
-        g = g.sort_values(time_cols)
-        n = len(g)
-        train_end = int(n * train_frac)
-        val_end = train_end + int(n * val_frac)
-        train_idx.extend(g.index[:train_end])
-        val_idx.extend(g.index[train_end:val_end])
-        test_idx.extend(g.index[val_end:])
-    train_df = df.loc[train_idx].reset_index(drop=True)
-    val_df   = df.loc[val_idx].reset_index(drop=True)
-    test_df  = df.loc[test_idx].reset_index(drop=True)
-    return train_df, val_df, test_df
-
-
-# def expand_date_features(
-#     df: pd.DataFrame,
-#     date_cols: List[str],
-#     date_parts: Optional[Union[List[str], Dict[str, List[str]]]] = None
-# ) -> Tuple[pd.DataFrame, List[str]]:
-#     """
-#     Expand datetime columns into multiple date part features.
-#     """
-#     default_parts = ["year", "month", "day", "hour", "minute"]
-#     new_feats: List[str] = []
-#     for col in date_cols:
-#         df[col] = pd.to_datetime(df[col], errors="coerce")
-#         if isinstance(date_parts, dict):
-#             parts = date_parts.get(col, default_parts)
-#         else:
-#             parts = date_parts or default_parts
-#         for part in parts:
-#             df[f"{col}_{part}"] = getattr(df[col].dt, part)
-#             new_feats.append(f"{col}_{part}")
-#     return df, new_feats
-
-
-def make_lookup(
-    col: pd.Series,
-    pad_id: int = 0,
-    unk_id: int = 1
-) -> Tuple[Dict[str,int], np.ndarray]:
-    """
-    Build token->id mapping with reserved PAD=0 and UNK=1.
-    """
-    uniques = sorted(col.dropna().astype(str).unique())
-    mapping = {"__PAD__": pad_id, "__UNK__": unk_id}
-    mapping.update({tok: i+2 for i, tok in enumerate(uniques)})
-    inv = np.empty(len(mapping), dtype=object)
-    for tok, idx in mapping.items():
-        inv[idx] = tok
-    return mapping, inv
-
-
-def encode_col(
-    col: pd.Series,
-    mapping: Dict[str,int],
-    unk_id: int = 1
-) -> np.ndarray:
-    """
-    Map tokens to IDs; unseen -> UNK.
-    """
-    return col.astype(str).map(mapping).fillna(unk_id).astype(np.int32).to_numpy()
-
+from typing import List, Dict, Tuple
 
 def preprocess(
     file: str,
     cat_features: List[str],
     cont_features: List[str],
-    # date_parts: Optional[Union[List[str], Dict[str,List[str]]]] = None,
+    group_key: str = "User",
+    time_col: str = "Time",
     train_frac: float = 0.70,
-    val_frac: float = 0.15,
-    seed: int = 42
+    val_frac: float   = 0.15,
+    seed: int         = 42,
 ) -> Tuple[
     pd.DataFrame, pd.DataFrame, pd.DataFrame,
-    Dict[str,Dict], List[str], List[str], StandardScaler
+    Dict[str, Dict[str, np.ndarray]],
+    List[str], List[str], StandardScaler
 ]:
     """
-    Load CSV, engineer features, and produce encoded train/val/test splits.
+    Fast, vectorized preprocessing:
+      - binary label from "Is Fraud?"
+      - parse `time_col` into Hour
+      - vectorized split by `group_key` into train/val/test
+      - pandas categorical codes (+2 for PAD/UNK) for all cat_features + Hour
+      - one-shot StandardScaler on all cont_features
     """
-    # 1) Load only needed cols
+    # 1) load
     df = pd.read_feather(file)
- 
-    # # 2) Combine date parts into datetime
-    # df["trans_datetime"] = pd.to_datetime(
-    #     df["Year"].astype(int).astype(str) + "-" +
-    #     df["Month"].astype(int).astype(str).str.zfill(2) + "-" +
-    #     df["Day"].astype(int).astype(str).str.zfill(2) + " " +
-    #     df["Time"],
-    #     errors="coerce"
-    # )
 
-    # 3) Binary fraud flag
-    df["is_fraud"] = df["Is Fraud?"].astype(str).str.lower().map({"yes":1, "no":0})
+    # 2) binary fraud flag
+    df["is_fraud"] = df["Is Fraud?"].str.lower().map({"yes":1, "no":0})
 
-    # 4) Expand datetime into parts
-    # df, new_date_feats = expand_date_features(
-    #     df, date_cols=["trans_datetime"], date_parts=date_parts
-    # )
-    df['Time'] = pd.to_datetime(df['Time'], format='%H:%M', errors="coerce")
+    # 3) extract Hour and drop original time & fraud columns
+    df[time_col] = pd.to_datetime(df[time_col], format="%H:%M", errors="coerce")
+    df["Hour"]  = df[time_col].dt.hour.astype("category")
+    df.drop(columns=[time_col, "Is Fraud?"], inplace=True)
 
-    # 2) extract hour and convert to categorical
-    df['Hour'] = df['Time'].dt.hour.astype('category')
+    # 4) clean any stringy cont_features → numeric
+    for c in cont_features:
+        if df[c].dtype == object:
+            df[c] = pd.to_numeric(
+                df[c].astype(str)
+                     .str.replace(r"[\$,]", "", regex=True),
+                errors="coerce"
+            )
 
-    df['Amount'] = pd.to_numeric(
-    df['Amount'].str.replace(r'[\$,]', '', regex=True),
-    errors='coerce'   # non‐parseable values become NaN
-    )
-    df.drop(columns=["Time", "Is Fraud?"], inplace=True)
+    # 5) vectorized train/val/test split by group_key
+    df["rank"]   = df.groupby(group_key).cumcount()
+    df["n_txns"] = df.groupby(group_key)["rank"].transform("max") + 1
 
-    # 6) Split per card
-    train_df, val_df, test_df = split_df_per_card(
-        df, group_key="Card",
-        train_frac=train_frac, val_frac=val_frac, seed=seed
-    )
+    df["split"] = np.where(
+        df["rank"] <  df["n_txns"] * train_frac, "train",
+    np.where(
+        df["rank"] <  df["n_txns"] * (train_frac + val_frac), "val",
+        "test"
+    ))
 
-    # 5) Drop original time cols
-    # df.drop(columns=["Year","Month","Day","Time","Is Fraud?","trans_datetime"], inplace=True)
+    # 6) assemble final feature lists
+    cat_feats  = list(cat_features) + ["Hour"]
+    cont_feats = list(cont_features)
 
-    # 7) Update feature lists
-    cat_feats = cat_features + ["Hour"]
-    cont_feats = cont_features.copy()
-
-    # 8) Fit encoders on train only
-    encoders: Dict[str, Dict] = {}
+    # 7) encode categoricals via pandas .cat.codes (+2), build map & inv arrays
+    encoders: Dict[str, Dict[str, np.ndarray]] = {}
     for c in cat_feats:
-        mapping, inv = make_lookup(train_df[c])
-        encoders[c] = {"map":mapping, "inv":inv}
-        train_df[c] = encode_col(train_df[c], mapping)
-        val_df[c]   = encode_col(val_df[c], mapping)
-        test_df[c]  = encode_col(test_df[c], mapping)
+        df[c] = df[c].astype("category")
+        codes = df[c].cat.codes.to_numpy(dtype=np.int32) + 2
+        inv   = df[c].cat.categories.to_numpy()
+        mapping = {tok: idx+2 for idx, tok in enumerate(inv)}
+        inv_array = np.empty(len(mapping) + 2, dtype=object)
+        inv_array[0], inv_array[1] = "__PAD__", "__UNK__"
+        inv_array[2:] = inv
+        df[c] = codes
+        encoders[c] = {"map": mapping, "inv": inv_array}
 
-    # 9) Scale cont features
-    scaler = StandardScaler().fit(train_df[cont_feats])
-    train_df[cont_feats] = scaler.transform(train_df[cont_feats])
-    val_df[cont_feats]   = scaler.transform(val_df[cont_feats])
-    test_df[cont_feats]  = scaler.transform(test_df[cont_feats])
+    # 8) fit & apply StandardScaler to all cont_feats
+    scaler = StandardScaler().fit(df[cont_feats].to_numpy())
+    df[cont_feats] = scaler.transform(df[cont_feats].to_numpy())
+
+    # 9) split out DataFrames and drop helper cols
+    drop_cols = ["rank", "n_txns", "split"]
+    def subset(name: str) -> pd.DataFrame:
+        subset_df = df[df["split"] == name].copy()
+        return subset_df.drop(columns=drop_cols).reset_index(drop=True)
+
+    train_df = subset("train")
+    val_df   = subset("val")
+    test_df  = subset("test")
 
     return train_df, val_df, test_df, encoders, cat_feats, cont_feats, scaler
-
-
-# def preprocess_for_inference(
-#     file: str,
-#     cat_features: List[str],
-#     cont_features: List[str],
-#     encoders: Dict[str,Dict],
-#     scaler: StandardScaler,
-#     date_parts: Optional[Union[List[str], Dict[str,List[str]]]] = None,
-#     train_frac: float = 0.70,
-#     val_frac: float = 0.15,
-#     seed: int = 42
-# ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-#     """
-#     Process new data using pre-fitted encoders and scaler.
-#     """
-#     df = pd.read_csv(file)
-#     df["trans_datetime"] = pd.to_datetime(
-#         df["Year"].astype(int).astype(str) + "-" +
-#         df["Month"].astype(int).astype(str).str.zfill(2) + "-" +
-#         df["Day"].astype(int).astype(str).str.zfill(2) + " " +
-#         df["Time"],
-#         errors="coerce"
-#     )
-#     df["is_fraud"] = df["Is Fraud?"].astype(str).str.lower().map({"yes":1, "no":0})
-#     df, new_date_feats = expand_date_features(
-#         df, date_cols=["trans_datetime"], date_parts=date_parts
-#     )
-#     df.drop(columns=["Year","Month","Day","Time","Is Fraud?","trans_datetime"], inplace=True)
-#     train_df, val_df, test_df = split_df_per_card(
-#         df, group_key="Card", time_col="trans_datetime",
-#         train_frac=train_frac, val_frac=val_frac, seed=seed
-#     )
-#     for c in cat_features + new_date_feats:
-#         mapping = encoders[c]["map"]
-#         for d in (train_df, val_df, test_df):
-#             d[c] = encode_col(d[c], mapping)
-#     for d in (train_df, val_df, test_df):
-#         d[cont_features] = scaler.transform(d[cont_features])
-#     return train_df, val_df, test_df
