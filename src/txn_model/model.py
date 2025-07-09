@@ -175,13 +175,13 @@ class TransactionModel(nn.Module):
         # simple row projection: (K*D) -> M
         self.row_projector = nn.Linear(K * D, M)
         # LSTM classifier
-        lstm = config.lstm
+        lstm_cfg = config.lstm
         self.lstm = LSTMClassifier(
             input_size=M,
-            hidden_size=lstm.hidden_size,
-            num_layers=lstm.num_layers,
-            num_classes=lstm.num_classes,
-            dropout=lstm.dropout
+            hidden_size=lstm_cfg.hidden_size,
+            num_layers=lstm_cfg.num_layers,
+            num_classes=lstm_cfg.num_classes,
+            dropout=lstm_cfg.dropout
         )
 
     def forward(self,

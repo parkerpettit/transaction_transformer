@@ -20,6 +20,13 @@ class SequenceTransformerConfig:
     norm_first:     bool
 
 @dataclass
+class LSTMConfig:
+    hidden_size:    int
+    num_layers:     int
+    num_classes:    int
+    dropout:        float
+
+@dataclass
 class ModelConfig:
     # embedding
     cat_vocab_sizes: dict[str,int]
@@ -34,5 +41,4 @@ class ModelConfig:
     # inter-row transformer
     sequence_transformer: SequenceTransformerConfig
 
-    # head
-    mlp_hidden:  int
+    lstm_config: LSTMConfig

@@ -1,5 +1,5 @@
 from data.dataset import TxnDataset, collate_fn, TxnCtxDataset, collate_fn_ctx
-from config import ModelConfig, FieldTransformerConfig, SequenceTransformerConfig
+from config import ModelConfig, FieldTransformerConfig, SequenceTransformerConfig, LSTMConfig
 from data.preprocessing import preprocess, preprocess_for_latents_full
 from torch.utils.data import DataLoader
 
@@ -65,7 +65,11 @@ DEPTH_S    = 4       # layers in SequenceTransformer (paper: 12)
 FFN_MULT   = 2        # feed-forward dim = 4 × d_model (paper default)
 DROPOUT    = 0.10
 LN_EPS     = 1e-6     # paper uses 1e-6
-MLP_HIDDEN = 64       # hidden layer inside the final MLP head (paper)
+LSTM_HID   = ROW_DIM     # hidden size of LSTM
+LSTM_NUM_LAYERS = 2
+NUM_CLASSES = 2
+
+
 # ------------------------------------------------------------------
 
 #  Intra-row (Field) transformer config
@@ -90,6 +94,13 @@ sequence_cfg = SequenceTransformerConfig(
     norm_first     = True
 )
 
+lstm_cfg = LSTMConfig(
+  hidden_size=LSTM_HID,
+  num_layers=LSTM_NUM_LAYERS,
+  num_classes=NUM_CLASSES,
+  dropout=DROPOUT
+)
+
 #   Assemble the global model config
 config = ModelConfig(
     cat_vocab_sizes = cat_vocab_sizes,   # dict[str,int]
@@ -99,7 +110,7 @@ config = ModelConfig(
     padding_idx     = 0,
     field_transformer    = field_cfg,
     sequence_transformer = sequence_cfg,
-    mlp_hidden      = MLP_HIDDEN         # 128
+    lstm = lstm_cfg
 )
 
 
