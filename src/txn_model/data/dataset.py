@@ -4,20 +4,20 @@ from torch import Tensor
 import numpy as np
 import pandas as pd
 
-
 class TxnDataset(Dataset):
     """
     Dataset for sequence‑to‑next‑row training on transaction data, generating each prefix on-the-fly.
 
-  
+
     """
     def __init__(
         self,
         df: pd.DataFrame,
-        group_key: str,
+        group_by: str, # cc_num
         cat_features: list[str],
         cont_features: list[str],
-        max_len: int | None = None,
+        mode: str,
+        # max_len: int | None = None,
     ):
       """
       Args:
@@ -28,82 +28,108 @@ class TxnDataset(Dataset):
           cont_features: list of continuous feature names in df
           max_len: max content window length. if None, we use full history
       """
-      self.max_len = max_len
-      self.df = df.reset_index(drop=True)
-      self.cat_array = self.df[cat_features].to_numpy(dtype=np.int64)
-      self.cont_array = self.df[cont_features].to_numpy(dtype=np.float32)
+      self.user_seqs = []
+      self.mode = mode
 
-      self.group_lengths = []
-      self.group_starts = []
-      for _, grp in self.df.groupby(by=group_key, sort=False):
-          start_idx = int(grp.index.min())
-          length = int(len(grp))
-          if length < 2: # not enough transactions for a sample
-              continue
-          self.group_starts.append(start_idx)
-          self.group_lengths.append(length)
-      
-      # each group of L transactions creates L - 1 samples
-      counts = [L - 1 for L in self.group_lengths]
-      self.cum_counts = np.concatenate(([0], np.cumsum(counts)))
+      for uid, group in df.groupby(group_by): # e.g. group data by cc_num
+        cat_tensor = torch.tensor(group[cat_features].to_numpy(), dtype=torch.long)
+        cont_tensor = torch.tensor(group[cont_features].to_numpy(), dtype=torch.float)
+        self.user_seqs.append((cat_tensor, cont_tensor))
 
     def __len__(self):
       """
-      Returns the number of examples in the dataset, i.e. the total
-      number of prefixes, which is sum(L-1 for each group).
+      Returns the number of examples in the dataset (number of user histories)
       """
-      return int(self.cum_counts[-1])
+      return len(self.user_seqs)
 
-    def __getitem__(self, idx: int) -> tuple[
-        dict[str, Tensor],  # inputs
-        dict[str, Tensor],  # targets
-    ]:
+    def __getitem__(self, idx: int) -> dict[str, Tensor]:
       """
-      Returns: 
+      Returns:
               inputs: {
                 "cat": LongTensor of shape [seq_len, C],
                 "cont": FloatTensor of shape [seq_len, F]
               }
-              targets: {
-                "tgt_cat": LongTensor of shape [C],
-                "tgt_cont": FloatTensor of shape [F]
-              }
         where C is the number of categorical features and F is the number of continuous features.
 
       """
-      # locate which group (card) this idx belongs to
-      # cum_counts[i] = total examples before group i
-      group_id = int(np.searchsorted(self.cum_counts, idx, side="right",) - 1)
 
-      # index step within that group (0 <= t < group_length - 1)
-      t = int(idx - self.cum_counts[group_id])
+      cat_tensor, cont_tensor = self.user_seqs[idx]
+      L = cat_tensor.size(0)
+      if self.mode == "random":
+        low  = min(256, L)
+        high = min(512, L)
+        win_len = torch.randint(low, high + 1, ()).item()      # () gives a 0-D tensor
+        if L > win_len:
+            start = torch.randint(0, L - win_len + 1, ()).item()
+        else:
+            start = 0
 
-      base = self.group_starts[group_id]
-      seq_end = base + t + 1 # exclusive index of next transaction
-
-      # enforce fixed window
-      if self.max_len is not None:
-          seq_start = max(base, seq_end - self.max_len)
-      else:
-          seq_start = base
-
-      cat_context_np = self.cat_array[seq_start:seq_end] # shape (seq_len, C)
-      cont_context_np = self.cont_array[seq_start:seq_end] # shape (seq_len, F)
-
-      cat_target_np = self.cat_array[seq_end] # shape (C,)
-      cont_target_np = self.cont_array[seq_end] # shape (F,)
-
-      # convert to tensors
-      inputs = {
-          "cat": torch.from_numpy(cat_context_np).long(),
-          "cont": torch.from_numpy(cont_context_np).float()
-      }
-      targets = {
-          "tgt_cat": torch.from_numpy(cat_target_np).long(),
-          "tgt_cont": torch.from_numpy(cont_target_np).float()
-      }
+        return {"cat": cat_tensor[start:start+win_len, :], "cont": cont_tensor[start:start+win_len, :]}
+      elif self.mode == "tail512":
+        return {"cat": cat_tensor[-512:], "cont": cont_tensor[-512:]}
 
 
-      return inputs, targets
+def collate_fn(batch, pad_id=0):
+    max_len = max(b["cat"].shape[0] for b in batch)
+
+    def _pad(seq, value):
+        pad_len = max_len - seq.shape[0]
+        return torch.nn.functional.pad(seq, (0, 0, 0, pad_len), value=value)
+
+    cat  = torch.stack([_pad(b["cat"],  pad_id) for b in batch])   # (B, L, C)
+    cont = torch.stack([_pad(b["cont"], 0.0)    for b in batch])   # (B, L, F)
+
+    pad_mask = (cat == pad_id).all(dim=-1)        # (B, L)  bool
+    return {"cat": cat, "cont": cont, "pad_mask": pad_mask}
+
+
+
+
+
+class TxnCtxDataset(Dataset):
+    """
+    One sample = last <= 255 rows ending at index i
+    Returns cat/cont tensors **and** the label for row i.
+    """
+    def __init__(self, df: pd.DataFrame,
+                 group_by: str,             # "cc_num"
+                 cat_cols: list[str],
+                 cont_cols: list[str],
+                 keep_neg_every: int = 20): # subsample non-fraud rows
+        self.samples = []
+        for _, g in df.groupby(group_by, sort=False):
+            cat  = torch.tensor(g[cat_cols ].to_numpy(), dtype=torch.long)
+            cont = torch.tensor(g[cont_cols].to_numpy(), dtype=torch.float32)
+            y    = torch.tensor(g["is_fraud"].to_numpy(), dtype=torch.int64)
+
+            for i in range(len(g)):
+                if y[i] == 0 and (i % keep_neg_every):
+                    continue                            # down-sample non-fraud
+                start = max(0, i - 255)                # keep <= 512 rows
+                self.samples.append({
+                    "cat"  : cat [start:i+1],
+                    "cont" : cont[start:i+1],
+                    "label": y[i]
+                })
+
+    def __len__(self):  return len(self.samples)
+
+    def __getitem__(self, idx):
+        return self.samples[idx]
+
+
+def collate_fn_ctx(batch, pad_id=0):
+    max_len = max(b["cat"].shape[0] for b in batch)
+
+    def _pad(x, value):                    # x : (L, dim)
+        pad_len = max_len - x.shape[0]
+        return torch.nn.functional.pad(x, (0, 0, 0, pad_len), value=value)
+
+    cat  = torch.stack([_pad(b["cat"],  pad_id) for b in batch])   # B,L,C
+    cont = torch.stack([_pad(b["cont"], 0.0)    for b in batch])   # B,L,F
+    pad  = (cat == pad_id).all(dim=-1)                            # B,L
+    y    = torch.tensor([b["label"] for b in batch], dtype=torch.int64)
+    return {"cat": cat, "cont": cont, "pad_mask": pad, "label": y}
+
 
 
