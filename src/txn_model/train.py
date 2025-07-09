@@ -23,7 +23,7 @@ def train(
     # 2) Model, loss, optimizer
     model = TransactionModel(config).to(device)
     print(f"[{datetime.now()}] Initialized model with config: {config}")
-    criterion = nn.CrossEntropyLoss()
+    criterion = nn.CrossEntropyLoss(weight=torch.tensor([  0.5006, 401.1244], device='cuda:0'))
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
 
     # 3) Checkpoint loading

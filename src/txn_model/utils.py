@@ -74,7 +74,7 @@ def load_or_initialize_checkpoint(
             print(f"Renamed old checkpoint to: {new_name}\n")
 
             best_val = float("inf")
-            start_epoch = 1
+            start_epoch = 0
         else:
             # Safe to resume
             model.load_state_dict(ckpt["model_state"])
