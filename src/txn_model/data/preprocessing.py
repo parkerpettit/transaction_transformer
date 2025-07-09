@@ -79,7 +79,7 @@ def preprocess(
         # apply to each split (mapping missing→UNK=1)
         for split_df in (train_df, val_df, test_df):
             codes = split_df[c].map(mapping).fillna(1).astype(int)
-            split_df[c] = codes + 1  # shift if needed
+            split_df[c] = codes # shift if needed
 
     # 8) fit & apply StandardScaler to all cont_feats
     scaler = StandardScaler().fit(train_df[cont_feats].to_numpy())
