@@ -59,25 +59,6 @@ def preprocess(
     # 6) assemble final feature lists
     cat_feats  = list(cat_features) + ["Hour"]
     cont_feats = list(cont_features)
-
-    # 7) encode categoricals via pandas .cat.codes (+2), build map & inv arrays
-    encoders: Dict[str, Dict[str, np.ndarray]] = {}
-    for c in cat_feats:
-        df[c] = df[c].astype("category")
-        codes = df[c].cat.codes.to_numpy(dtype=np.int32) + 2
-        inv   = df[c].cat.categories.to_numpy()
-        mapping = {tok: idx+2 for idx, tok in enumerate(inv)}
-        inv_array = np.empty(len(mapping) + 2, dtype=object)
-        inv_array[0], inv_array[1] = "__PAD__", "__UNK__"
-        inv_array[2:] = inv
-        df[c] = codes
-        encoders[c] = {"map": mapping, "inv": inv_array}
-
-    # 8) fit & apply StandardScaler to all cont_feats
-    scaler = StandardScaler().fit(df[cont_feats].to_numpy())
-    df[cont_feats] = scaler.transform(df[cont_feats].to_numpy())
-
-    # 9) split out DataFrames and drop helper cols
     drop_cols = ["rank", "n_txns", "split"]
     def subset(name: str) -> pd.DataFrame:
         subset_df = df[df["split"] == name].copy()
@@ -86,5 +67,26 @@ def preprocess(
     train_df = subset("train")
     val_df   = subset("val")
     test_df  = subset("test")
+    # 7) encode categoricals via pandas .cat.codes (+2), build map & inv arrays
+    encoders: Dict[str, Dict[str, np.ndarray]] = {}
+    for c in cat_feats:
+        train_df[c] = train_df[c].astype("category")
+        cats = train_df[c].cat.categories
+        mapping = {tok: idx+2 for idx, tok in enumerate(cats)}
+        inv_array = np.array(["__PAD__", "__UNK__"] + list(cats), dtype=object)
+        encoders[c] = {"map": mapping, "inv": inv_array}
+
+        # apply to each split (mapping missing→UNK=1)
+        for split_df in (train_df, val_df, test_df):
+            codes = split_df[c].map(mapping).fillna(1).astype(int)
+            split_df[c] = codes + 1  # shift if needed
+
+    # 8) fit & apply StandardScaler to all cont_feats
+    scaler = StandardScaler().fit(train_df[cont_feats].to_numpy())
+    train_df[cont_feats] = scaler.transform(train_df[cont_feats])
+    val_df[cont_feats]   = scaler.transform(val_df[cont_feats])
+    test_df[cont_feats]  = scaler.transform(test_df[cont_feats])
+
+
 
     return train_df, val_df, test_df, encoders, cat_feats, cont_feats, scaler
