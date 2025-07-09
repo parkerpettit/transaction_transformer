@@ -1,13 +1,16 @@
-from data.dataset import TxnDataset, collate_fn #,TxnCtxDataset, collate_fn_ctx
-from config import ModelConfig, FieldTransformerConfig, SequenceTransformerConfig, LSTMConfig
-from data.preprocessing import preprocess#, preprocess_for_latents_full
-from train import train
-from torch.utils.data import DataLoader
-import joblib
+# main.py
 import os
 import time
+import torch
 from datetime import datetime
+from torch.utils.data import DataLoader
+from data.dataset import TxnDataset, collate_fn
+from config import ModelConfig, FieldTransformerConfig, SequenceTransformerConfig, LSTMConfig
+from data.preprocessing import preprocess
+from train import train
+import joblib
 
+# Utility logging
 def log(msg, start=None):
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     if start is not None:
@@ -22,15 +25,7 @@ def log(msg, start=None):
 log("Starting to load dataframes and misc from joblib")
 t0 = time.perf_counter()
 cache_path = "/content/drive/MyDrive/summer_urop_25/datasets/processed_data.joblib"
-(
-    train_df,
-    val_df,
-    test_df,
-    encoders,
-    cat_features,
-    cont_features,
-    scaler
-) = joblib.load(cache_path)
+train_df, val_df, test_df, encoders, cat_features, cont_features, scaler = joblib.load(cache_path)
 log("Dataframes and misc loaded", t0)
 
 # ------------------------------------------------------------------------------
@@ -41,77 +36,75 @@ cat_vocab_sizes = {col: len(enc["inv"]) for col, enc in encoders.items()}
 log("Computed cat_vocab_sizes", t1)
 
 # ------------------------------------------------------------------------------
-# Create datasets
+# TxnDataset caching with torch.save / torch.load
 # ------------------------------------------------------------------------------
-WIN_CACHE = "/content/drive/MyDrive/summer_urop_25/datasets/txn_windows.joblib"
+DS_CACHE = "/content/drive/MyDrive/summer_urop_25/datasets/txn_ds_cache.pt"
 
-# --------------------------------------------------------------------------
-# Build (or load) window indices
-# --------------------------------------------------------------------------
-log("Building window indices")
-t_indices = time.perf_counter()
-
-if os.path.exists(WIN_CACHE):
-    # measure load
-    train_wins, val_wins, test_wins = joblib.load(WIN_CACHE)
-    log("Loaded window indices from cache", t_indices)
-
+if os.path.exists(DS_CACHE):
+    t_load = time.perf_counter()
+    train_ds, val_ds, test_ds = torch.load(DS_CACHE)
+    log(f"Loaded full TxnDataset objects via torch.load", t_load)
 else:
-    # measure compute
-    train_wins = TxnDataset.compute_windows(train_df, "User", window_size=10, stride=5)
-    val_wins   = TxnDataset.compute_windows(val_df,   "User", window_size=10, stride=5)
-    test_wins  = TxnDataset.compute_windows(test_df,  "User", window_size=10, stride=5)
-    log("Computed window indices", t_indices)
+    log("Building full TxnDataset objects (this runs once)")
+    t_build = time.perf_counter()
+    train_ds = TxnDataset(
+        df=train_df,
+        group_by="User",
+        cat_features=cat_features,
+        cont_features=cont_features,
+        window_size=10,
+        stride=5
+    )
+    val_ds = TxnDataset(
+        df=val_df,
+        group_by="User",
+        cat_features=cat_features,
+        cont_features=cont_features,
+        window_size=10,
+        stride=5
+    )
+    test_ds = TxnDataset(
+        df=test_df,
+        group_by="User",
+        cat_features=cat_features,
+        cont_features=cont_features,
+        window_size=10,
+        stride=5
+    )
+    log("Built TxnDataset objects", t_build)
 
-    # measure dump
-    t_dump = time.perf_counter()
-    joblib.dump((train_wins, val_wins, test_wins), WIN_CACHE, compress=0)
-    log(f"Saved window indices to cache ({WIN_CACHE})", t_dump)
-
-# --------------------------------------------------------------------------
-# Build the datasets from your indices
-# --------------------------------------------------------------------------
-log("Building TxnDatasets from indices")
-t_build = time.perf_counter()
-train_ds = TxnDataset(train_df, cat_features, cont_features, train_wins)
-val_ds   = TxnDataset(val_df,   cat_features, cont_features, val_wins)
-test_ds  = TxnDataset(test_df,  cat_features, cont_features, test_wins)
-log("Built TxnDatasets from indices", t_build)
+    t_save = time.perf_counter()
+    torch.save((train_ds, val_ds, test_ds), DS_CACHE)
+    log(f"Saved full TxnDataset objects via torch.save to {DS_CACHE}", t_save)
 
 # ------------------------------------------------------------------------------
 # Create DataLoaders
 # ------------------------------------------------------------------------------
 log("Building DataLoaders")
 t3 = time.perf_counter()
-train_loader = DataLoader(
-    train_ds, shuffle=True, batch_size=32,
-    num_workers=4, collate_fn=collate_fn, pin_memory=True
-)
-val_loader = DataLoader(
-    val_ds, batch_size=32, shuffle=False,
-    num_workers=4, collate_fn=collate_fn, pin_memory=True
-)
-test_loader = DataLoader(
-    test_ds, batch_size=32, shuffle=False,
-    num_workers=4, collate_fn=collate_fn, pin_memory=True
-)
+train_loader = DataLoader(train_ds, shuffle=True, batch_size=32,
+                          num_workers=4, collate_fn=collate_fn, pin_memory=True)
+val_loader = DataLoader(val_ds, batch_size=32, shuffle=False,
+                        num_workers=4, collate_fn=collate_fn, pin_memory=True)
+test_loader = DataLoader(test_ds, batch_size=32, shuffle=False,
+                         num_workers=4, collate_fn=collate_fn, pin_memory=True)
 log("DataLoaders ready", t3)
 
 # ------------------------------------------------------------------------------
-# Define model configuration
+# Define model configuration (unchanged)
 # ------------------------------------------------------------------------------
 log("Assembling model configuration")
 t4 = time.perf_counter()
-EMB_DIM    = 48
-ROW_DIM    = 256
-HEADS_F    = 4
-HEADS_S    = 4
-DEPTH_F    = 1
-DEPTH_S    = 4
-FFN_MULT   = 2
-DROPOUT    = 0.10
-LN_EPS     = 1e-6
-LSTM_HID   = ROW_DIM
+EMB_DIM = 48
+ROW_DIM = 256
+HEADS_F = 4
+HEADS_S = 4
+DEPTH_F = 1
+DEPTH_S = 4
+FFN_MULT = 2
+DROPOUT = 0.10
+LN_EPS = 1e-6
+LSTM_HID = ROW_DIM
 LSTM_NUM_LAYERS = 2
 NUM_CLASSES = 1
 

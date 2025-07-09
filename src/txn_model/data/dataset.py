@@ -8,6 +8,9 @@ import torch
 from torch.utils.data import Dataset
 import pandas as pd
 import numpy as np
+import torch
+from torch.utils.data import Dataset
+import pandas as pd
 
 class TxnDataset(Dataset):
     """
@@ -16,51 +19,37 @@ class TxnDataset(Dataset):
     Each sample is:
       - "cat": LongTensor [window_size, C]
       - "cont": FloatTensor [window_size, F]
-      - "label": LongTensor  (0 or 1)  ← the is_fraud flag of the last row in the window
+      - "label": LongTensor  (0 or 1)
     """
     def __init__(
         self,
         df: pd.DataFrame,
+        group_by: str,
         cat_features: list[str],
         cont_features: list[str],
-        windows: list[np.ndarray],
-    ):
-        # Store the full dataframe and feature lists
-        self.df = df.reset_index(drop=True)
-        self.cat_feats = cat_features
-        self.cont_feats = cont_features
-        self.windows = windows
-
-    @staticmethod
-    def compute_windows(
-        df: pd.DataFrame,
-        group_by: str,
         window_size: int,
-        stride: int
-    ) -> list[np.ndarray]:
-        """
-        Precompute sliding-window indices for each user.
-        Returns a list of numpy arrays of row-indices, each of length = window_size.
-        """
-        windows = []
+        stride: int,
+    ):
+        self.samples = []
         for _, group in df.groupby(group_by, sort=False):
-            idx = group.index.to_numpy()
-            n = len(idx)
-            for start in range(0, n - window_size + 1, stride):
-                windows.append(idx[start:start + window_size])
-        return windows
+            cat_tensor = torch.tensor(group[cat_features].values, dtype=torch.long)
+            cont_tensor = torch.tensor(group[cont_features].values, dtype=torch.float)
+            label_tensor = torch.tensor(group["is_fraud"].values, dtype=torch.long)
+            L = cat_tensor.size(0)
+
+            for start in range(0, L - window_size + 1, stride):
+                end = start + window_size
+                self.samples.append({
+                    "cat":   cat_tensor[start:end],
+                    "cont":  cont_tensor[start:end],
+                    "label": label_tensor[end - 1],
+                })
 
     def __len__(self):
-        return len(self.windows)
+        return len(self.samples)
 
-    def __getitem__(self, i: int):
-        idxs = self.windows[i]
-        # Select the block of rows for this window
-        block = self.df.loc[idxs, self.cat_feats + self.cont_feats + ["is_fraud"]]
-        cat = torch.tensor(block[self.cat_feats].values, dtype=torch.long)    # [L, C]
-        cont = torch.tensor(block[self.cont_feats].values, dtype=torch.float) # [L, F]
-        label = torch.tensor(block["is_fraud"].iat[-1], dtype=torch.long)   # scalar
-        return {"cat": cat, "cont": cont, "label": label}
+    def __getitem__(self, idx: int):
+        return self.samples[idx]
 
 
 def collate_fn(batch: list[dict], pad_id: int = 0):
