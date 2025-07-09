@@ -107,7 +107,7 @@ def train(
         )
 
         # 6) Early-stopping & checkpointing
-        if val_loss < best_val - config.min_delta:
+        if val_loss < best_val - 1e-5:
             best_val = val_loss
             wait = 0
             print(f"[{datetime.now()}] New best model (val_loss: {best_val:.4f}), saving checkpoint.")

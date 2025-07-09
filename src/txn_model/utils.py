@@ -83,7 +83,7 @@ def load_or_initialize_checkpoint(
             start_epoch = ckpt.get("epoch", 0) + 1
     else:
         best_val = float("inf")
-        start_epoch = 1
+        start_epoch = 0
 
     return best_val, start_epoch
 
