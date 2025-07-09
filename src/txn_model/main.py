@@ -1,6 +1,7 @@
 from data.dataset import TxnDataset, collate_fn, TxnCtxDataset, collate_fn_ctx
 from config import ModelConfig, FieldTransformerConfig, SequenceTransformerConfig, LSTMConfig
 from data.preprocessing import preprocess, preprocess_for_latents_full
+from train import train
 from torch.utils.data import DataLoader
 import joblib
 
@@ -125,6 +126,13 @@ config = ModelConfig(
     lstm = lstm_cfg
 )
 
+train(config=config,
+      cat_vocab_mapping=cat_vocab_sizes,
+      cat_features=cat_features,
+      cont_features=cont_features,
+      train_loader=train_loader,
+      val_loader=val_loader
+      )
 
 # train_df, val_df, test_df, cat_feats, cont_feats = preprocess_for_latents_full(
 #     file                = "credit_card_transactions.csv",
