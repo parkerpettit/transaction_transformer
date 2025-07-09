@@ -70,17 +70,21 @@ def preprocess(
     # 7) encode categoricals via pandas .cat.codes (+2), build map & inv arrays
     encoders: Dict[str, Dict[str, np.ndarray]] = {}
     for c in cat_feats:
+        # build the train-only vocabulary
         train_df[c] = train_df[c].astype("category")
         cats = train_df[c].cat.categories
-        mapping = {tok: idx+2 for idx, tok in enumerate(cats)}
+        mapping = {tok: idx + 2 for idx, tok in enumerate(cats)}
         inv_array = np.array(["__PAD__", "__UNK__"] + list(cats), dtype=object)
         encoders[c] = {"map": mapping, "inv": inv_array}
 
-        # apply to each split (mapping missing→UNK=1)
+        # apply the map to train, val, test
         for split_df in (train_df, val_df, test_df):
+            # ➊ make it a plain column so we can write ints into it
+            split_df[c] = split_df[c].astype("object")
+            # ➋ map unseen→NaN, fill with UNK=1, cast to int
             codes = split_df[c].map(mapping).fillna(1).astype(int)
-            split_df[c] = codes # shift if needed
-
+            # ➌ shift to reserve 0=PAD
+            split_df[c] = codes
     # 8) fit & apply StandardScaler to all cont_feats
     scaler = StandardScaler().fit(train_df[cont_feats].to_numpy())
     train_df[cont_feats] = scaler.transform(train_df[cont_feats])
