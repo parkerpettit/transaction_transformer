@@ -45,16 +45,32 @@ log("Computed cat_vocab_sizes", t1)
 # ------------------------------------------------------------------------------
 WIN_CACHE = "/content/drive/MyDrive/summer_urop_25/datasets/txn_windows.joblib"
 
-log("Building indices")
-t_save = time.perf_counter()
+# --------------------------------------------------------------------------
+# Build (or load) window indices
+# --------------------------------------------------------------------------
+log("Building window indices")
+t_indices = time.perf_counter()
+
 if os.path.exists(WIN_CACHE):
+    # measure load
     train_wins, val_wins, test_wins = joblib.load(WIN_CACHE)
+    log("Loaded window indices from cache", t_indices)
+
 else:
+    # measure compute
     train_wins = TxnDataset.compute_windows(train_df, "User", window_size=10, stride=5)
     val_wins   = TxnDataset.compute_windows(val_df,   "User", window_size=10, stride=5)
     test_wins  = TxnDataset.compute_windows(test_df,  "User", window_size=10, stride=5)
+    log("Computed window indices", t_indices)
+
+    # measure dump
+    t_dump = time.perf_counter()
     joblib.dump((train_wins, val_wins, test_wins), WIN_CACHE, compress=0)
-    log(f"Window indices cached to {WIN_CACHE}", t_save)
+    log(f"Saved window indices to cache ({WIN_CACHE})", t_dump)
+
+# --------------------------------------------------------------------------
+# Build the datasets from your indices
+# --------------------------------------------------------------------------
 log("Building TxnDatasets from indices")
 t_build = time.perf_counter()
 train_ds = TxnDataset(train_df, cat_features, cont_features, train_wins)
