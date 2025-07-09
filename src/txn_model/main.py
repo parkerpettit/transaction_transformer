@@ -63,40 +63,40 @@ log("Computed cat_vocab_sizes", t1)
 # ------------------------------------------------------------------------------
 # TxnDataset caching with torch.save / torch.load
 # ------------------------------------------------------------------------------
-DS_CACHE = "/content/drive/MyDrive/summer_urop_25/datasets/txn_ds_cache.pt"
-
-# if os.path.exists(DS_CACHE):
-#     t_load = time.perf_counter()
-#     train_ds, val_ds, test_ds = torch.load(DS_CACHE, weights_only=False)
-#     log(f"Loaded full TxnDataset objects via torch.load", t_load)
-# else:
-log("Building full TxnDataset objects")
-t_build = time.perf_counter()
-train_ds = TxnDataset(
-    df=train_df,
-    group_by="User",
-    cat_features=cat_features,
-    cont_features=cont_features,
-    window_size=100,
-    stride=50
-)
-val_ds = TxnDataset(
-    df=val_df,
-    group_by="User",
-    cat_features=cat_features,
-    cont_features=cont_features,
-    window_size=100,
-    stride=50
-)
-test_ds = TxnDataset(
-    df=test_df,
-    group_by="User",
-    cat_features=cat_features,
-    cont_features=cont_features,
-    window_size=100,
-    stride=50
-)
-log("Built TxnDataset objects", t_build)
+# DS_CACHE = "/content/drive/MyDrive/summer_urop_25/datasets/txn_ds_cache.pt"
+DS_CACHE = "/content/txn_ds_cache.pt"
+if os.path.exists(DS_CACHE):
+    t_load = time.perf_counter()
+    train_ds, val_ds, test_ds = torch.load(DS_CACHE, weights_only=False)
+    log(f"Loaded full TxnDataset objects via torch.load", t_load)
+else:
+    log("Building full TxnDataset objects")
+    t_build = time.perf_counter()
+    train_ds = TxnDataset(
+        df=train_df,
+        group_by="User",
+        cat_features=cat_features,
+        cont_features=cont_features,
+        window_size=100,
+        stride=50
+    )
+    val_ds = TxnDataset(
+        df=val_df,
+        group_by="User",
+        cat_features=cat_features,
+        cont_features=cont_features,
+        window_size=100,
+        stride=50
+    )
+    test_ds = TxnDataset(
+        df=test_df,
+        group_by="User",
+        cat_features=cat_features,
+        cont_features=cont_features,
+        window_size=100,
+        stride=50
+    )
+    log("Built TxnDataset objects", t_build)
 
 # t_save = time.perf_counter()
 # torch.save((train_ds, val_ds, test_ds), DS_CACHE)

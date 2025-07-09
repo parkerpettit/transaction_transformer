@@ -15,7 +15,7 @@ def save_checkpoint(model, optimizer, epoch, best_val, path, cat_features, cont_
     }, path)
 
     # ── verification ──
-    cp = torch.load(path, map_location="cpu")
+    cp = torch.load(path, map_location="cpu", weights_only=False)
     assert cp["epoch"] == epoch,  "checkpoint epoch mismatch – file not overwritten?"
 
     mod_time = time.ctime(os.path.getmtime(path))
