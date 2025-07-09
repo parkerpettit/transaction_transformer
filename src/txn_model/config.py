@@ -34,7 +34,7 @@ class ModelConfig:
     emb_dim:          int
     dropout:          float
     padding_idx:      int
-
+    total_epochs:     int
     # intra-row transformer
     field_transformer: FieldTransformerConfig
 

@@ -175,7 +175,7 @@ class TransactionModel(nn.Module):
         # simple row projection: (K*D) -> M
         self.row_projector = nn.Linear(K * D, M)
         # LSTM classifier
-        lstm_cfg = config.lstm
+        lstm_cfg = config.lstm_config
         self.lstm = LSTMClassifier(
             input_size=M,
             hidden_size=lstm_cfg.hidden_size,
