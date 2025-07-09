@@ -124,6 +124,8 @@ def preprocess(
     df['Amount'].str.replace(r'[\$,]', '', regex=True),
     errors='coerce'   # non‐parseable values become NaN
     )
+    df.drop(columns=["Time", "Is Fraud?"], inplace=True)
+
     # 6) Split per card
     train_df, val_df, test_df = split_df_per_card(
         df, group_key="Card",
@@ -132,7 +134,6 @@ def preprocess(
 
     # 5) Drop original time cols
     # df.drop(columns=["Year","Month","Day","Time","Is Fraud?","trans_datetime"], inplace=True)
-    df.drop(columns=["Time", "Is Fraud?"], inplace=True)
 
     # 7) Update feature lists
     cat_feats = cat_features + ["Hour"]
