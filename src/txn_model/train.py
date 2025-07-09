@@ -141,7 +141,7 @@ def train(
     model  = TransactionModel(config).to(device)
 
     # single binary criterion
-    criterion = nn.BCEWithLogitsLoss()
+    criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
     # checkpoint setup (same path, same helper)
@@ -169,7 +169,7 @@ def train(
             inp_cont = batch["cont"][:, :-1].to(device)
             pad_mask = batch["pad_mask"][:, :-1].to(device).bool()
             labels   = batch["label"].to(device).float()   # shape [B]
-
+              
             logits = model(inp_cat, inp_cont, padding_mask=pad_mask).view(-1)
             loss   = criterion(logits, labels)
 

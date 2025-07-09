@@ -4,7 +4,7 @@ from data.preprocessing import preprocess#, preprocess_for_latents_full
 from train import train
 from torch.utils.data import DataLoader
 import joblib
-
+import os
 import time
 from datetime import datetime
 
@@ -43,24 +43,24 @@ log("Computed cat_vocab_sizes", t1)
 # ------------------------------------------------------------------------------
 # Create datasets
 # ------------------------------------------------------------------------------
-log("Creating TxnDataset objects")
-t2 = time.perf_counter()
-train_ds = TxnDataset(
-    df=train_df, group_by="User",
-    cat_features=cat_features, cont_features=cont_features,
-    window_size=10, stride=5
-)
-val_ds = TxnDataset(
-    df=val_df, group_by="User",
-    cat_features=cat_features, cont_features=cont_features,
-    window_size=10, stride=5
-)
-test_ds = TxnDataset(
-    df=test_df, group_by="User",
-    cat_features=cat_features, cont_features=cont_features,
-    window_size=10, stride=5
-)
-log("Datasets created", t2)
+WIN_CACHE = "/content/drive/MyDrive/summer_urop_25/datasets/txn_windows.joblib"
+
+log("Building indices")
+t_save = time.perf_counter()
+if os.path.exists(WIN_CACHE):
+    train_wins, val_wins, test_wins = joblib.load(WIN_CACHE)
+else:
+    train_wins = TxnDataset.compute_windows(train_df, "User", window_size=10, stride=5)
+    val_wins   = TxnDataset.compute_windows(val_df,   "User", window_size=10, stride=5)
+    test_wins  = TxnDataset.compute_windows(test_df,  "User", window_size=10, stride=5)
+    joblib.dump((train_wins, val_wins, test_wins), WIN_CACHE, compress=0)
+    log(f"Window indices cached to {WIN_CACHE}", t_save)
+log("Building TxnDatasets from indices")
+t_build = time.perf_counter()
+train_ds = TxnDataset(train_df, cat_features, cont_features, train_wins)
+val_ds   = TxnDataset(val_df,   cat_features, cont_features, val_wins)
+test_ds  = TxnDataset(test_df,  cat_features, cont_features, test_wins)
+log("Built TxnDatasets from indices", t_build)
 
 # ------------------------------------------------------------------------------
 # Create DataLoaders
@@ -97,7 +97,7 @@ DROPOUT    = 0.10
 LN_EPS     = 1e-6
 LSTM_HID   = ROW_DIM
 LSTM_NUM_LAYERS = 2
-NUM_CLASSES = 2
+NUM_CLASSES = 1
 
 field_cfg = FieldTransformerConfig(
     d_model=EMB_DIM, n_heads=HEADS_F, depth=DEPTH_F,

@@ -107,8 +107,8 @@ class SequenceTransformer(nn.Module):
         )
         return self.transformer(
             x,
-            mask=causal_mask,
-            src_key_padding_mask=padding_mask
+            mask=causal_mask.bool(),
+            src_key_padding_mask=padding_mask.bool()
         )  # (B, L, m)
 
 class LSTMClassifier(nn.Module):
