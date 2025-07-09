@@ -48,7 +48,7 @@ def load_or_initialize_checkpoint(
         start_epoch: Epoch number to start training from (1-based).
     """
     if os.path.exists(base_path):
-        ckpt = torch.load(base_path, map_location=device)
+        ckpt = torch.load(base_path, map_location=device, weights_only=False)
         old_cat = ckpt.get("cat_features", [])
         old_cont = ckpt.get("cont_features", [])
         mismatch_cat = old_cat != cat_features

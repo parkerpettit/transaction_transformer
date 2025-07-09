@@ -107,11 +107,11 @@ log("Built TxnDataset objects", t_build)
 # ------------------------------------------------------------------------------
 log("Building DataLoaders")
 t3 = time.perf_counter()
-train_loader = DataLoader(train_ds, shuffle=True, batch_size=600,
+train_loader = DataLoader(train_ds, shuffle=True, batch_size=650,
                           num_workers=4, collate_fn=collate_fn, pin_memory=True)
-val_loader = DataLoader(val_ds, batch_size=600, shuffle=False,
+val_loader = DataLoader(val_ds, batch_size=650, shuffle=False,
                         num_workers=4, collate_fn=collate_fn, pin_memory=True)
-test_loader = DataLoader(test_ds, batch_size=600, shuffle=False,
+test_loader = DataLoader(test_ds, batch_size=650, shuffle=False,
                          num_workers=4, collate_fn=collate_fn, pin_memory=True)
 log("DataLoaders ready", t3)
 
