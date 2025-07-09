@@ -8,8 +8,9 @@ def split_df_per_user(
     time_col: str = "unix_trans_time",
     train_frac: float = 0.70,
     val_frac: float = 0.15,
-    seed: int = 42
-):
+    seed: int = 42,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+  """Chronologically split each user's history into train/val/test sets."""
   train_idx, val_idx, test_idx = [], [], []
   rs = np.random.RandomState(seed)
 
@@ -72,25 +73,6 @@ def expand_date_features(
 
     return df, new_date_feats
 
-
-
-def encode_col(col: pd.Series, mapping: dict[str, int]) -> np.ndarray:
-  """Vectorised token -> id with UNK fallback."""
-  return (
-      col.astype(str)
-        .map(mapping)          # known → id, unknown → NaN
-        .fillna(1) # UNK id is 1        # NaN → UNK id
-        .astype(np.int32)
-        .to_numpy()
-  )
-
-
-
-
-import numpy as np
-import pandas as pd
-from sklearn.preprocessing import StandardScaler, LabelEncoder
-
 def preprocess(
     file: str,
     cat_features: list[str],
@@ -98,6 +80,7 @@ def preprocess(
     date_feats_to_expand: list[str] | None = None,
     date_parts: list[str] | dict[str, list[str]] | None  = None
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict[str, dict], list[str], list[str], StandardScaler]:
+    """Load a CSV, engineer features and produce encoded train/val/test splits."""
 
     # 1) load & basic clean
     essential = (
@@ -241,7 +224,6 @@ def preprocess_for_latents_full(
         + (date_feats_to_expand or []) + ['dob', 'trans_date_trans_time']
     )
     df = pd.read_csv(file, usecols=essential)
-    print(df["is_fraud"])
     # 2) Parse datetime columns
     df['trans_date_trans_time'] = pd.to_datetime(
         df['trans_date_trans_time'], errors='coerce')
