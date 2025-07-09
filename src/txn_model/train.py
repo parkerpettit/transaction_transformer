@@ -27,7 +27,7 @@ def train(
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
 
     # 3) Checkpoint loading
-    base_path = "txn_checkpoint.pt"
+    base_path = "/content/drive/MyDrive/summer_urop_25/datasets/txn_checkpoint.pt"
     best_val, start_epoch = load_or_initialize_checkpoint(
         base_path=base_path,
         device=device,
