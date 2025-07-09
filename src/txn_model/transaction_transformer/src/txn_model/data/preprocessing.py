@@ -97,7 +97,7 @@ def preprocess(
     Load CSV, engineer features, and produce encoded train/val/test splits.
     """
     # 1) Load only needed cols
-    df = pd.read_feather(file)
+    df = pd.read_csv(file)
  
     # # 2) Combine date parts into datetime
     # df["trans_datetime"] = pd.to_datetime(
@@ -115,15 +115,11 @@ def preprocess(
     # df, new_date_feats = expand_date_features(
     #     df, date_cols=["trans_datetime"], date_parts=date_parts
     # )
-    df['Time'] = pd.to_datetime(df['Time'], format='%H:%M', errors="coerce")
+    df['Timestamp'] = pd.to_datetime(df['Timestamp'], dayfirst=False)
 
     # 2) extract hour and convert to categorical
     df['Hour'] = df['Time'].dt.hour.astype('category')
 
-    df['Amount'] = pd.to_numeric(
-    df['Amount'].str.replace(r'[\$,]', '', regex=True),
-    errors='coerce'   # non‐parseable values become NaN
-    )
     # 6) Split per card
     train_df, val_df, test_df = split_df_per_card(
         df, group_key="Card",
@@ -132,7 +128,7 @@ def preprocess(
 
     # 5) Drop original time cols
     # df.drop(columns=["Year","Month","Day","Time","Is Fraud?","trans_datetime"], inplace=True)
-    df.drop(columns=["Time", "Is Fraud?"], inplace=True)
+
 
     # 7) Update feature lists
     cat_feats = cat_features + ["Hour"]
