@@ -290,15 +290,30 @@ class TransactionModel(nn.Module):
         norm_first=st_cfg.norm_first
     )
 
+    # simple linear projections before and after the sequence transformer
+    self.row_projector = nn.Linear(d * k, m)
+    self.output_projector = nn.Linear(m, d * k)
 
-    # self.head = MLP(
-    #     input_dim=config.emb_dim * k,
-    #     hidden_dim=config.mlp_hidden,
-    #     class_dims=list(config.cat_vocab_sizes.values()),
-    #     num_cont=num_cont
-    # ) # change to lstm head
+    # final classification/regression head
+    self.head = MLP(
+        input_dim=d * k,
+        hidden_dim=config.mlp_hidden,
+        class_dims=list(config.cat_vocab_sizes.values()),
+        num_cont=num_cont,
+    )
 
   def forward(self, cat: LongTensor, cont: Tensor, padding_mask: BoolTensor):
+    """Perform a full forward pass.
+
+    Args:
+        cat:  (B, L, C) tensor of categorical feature IDs.
+        cont: (B, L, F) tensor of continuous features.
+        padding_mask: (B, L) mask where True marks padding positions.
+
+    Returns:
+        Tuple (class_logits, regression_vals) where each element is shaped
+        like the input sequence.
+    """
     B, L, _ = cat.shape
 
     embeddings = self.embedder(cat, cont)
