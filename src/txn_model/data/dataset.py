@@ -70,6 +70,15 @@ class TxnDataset(Dataset):
 
 
 def collate_fn(batch, pad_id=0):
+    """Pad a list of variable length samples into batch tensors.
+
+    Args:
+        batch: list of dicts produced by ``TxnDataset``.
+        pad_id: padding value for categorical features.
+
+    Returns:
+        dict with ``cat``, ``cont`` and ``pad_mask`` tensors ready for the model.
+    """
     max_len = max(b["cat"].shape[0] for b in batch)
 
     def _pad(seq, value):
@@ -119,6 +128,11 @@ class TxnCtxDataset(Dataset):
 
 
 def collate_fn_ctx(batch, pad_id=0):
+    """Collate samples for context datasets with labels.
+
+    Pads variable length sequences and stacks them into batch tensors, also
+    returning the fraud label for the last transaction in each sample.
+    """
     max_len = max(b["cat"].shape[0] for b in batch)
 
     def _pad(x, value):                    # x : (L, dim)

@@ -7,8 +7,14 @@ from utils import load_or_initialize_checkpoint, save_checkpoint
 from evaluate import evaluate
 
 def train(
-  config, cat_vocab_mapping, cat_features, cont_features, train_loader, val_loader
+  config,
+  cat_vocab_mapping,
+  cat_features,
+  cont_features,
+  train_loader,
+  val_loader,
 ):
+  """Full training loop for ``TransactionModel``."""
   device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
   model  = TransactionModel(config).to(device)
 
@@ -18,7 +24,7 @@ def train(
   optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
   vocab_sizes = list(cat_vocab_mapping.values())
-  log_interval, total_desired_epochs = 50, 300
+  total_desired_epochs = 300
   model.train()
 
   # ── Hyperparams ──
