@@ -1,5 +1,6 @@
 import os
 import argparse
+import logging
 from datetime import datetime
 
 import torch
@@ -7,10 +8,12 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 
 from txn_model.data.dataset import TxnDataset, collate_fn
-from txn_model.config import (ModelConfig, FieldTransformerConfig,
-                              SequenceTransformerConfig, LSTMConfig)
+from txn_model.config import ModelConfig, FieldTransformerConfig, SequenceTransformerConfig, LSTMConfig
 from txn_model.model import TransactionModel
 from txn_model.data.preprocessing import preprocess
+from txn_model.logging_utils import configure_logging
+
+logger = configure_logging(__name__)
 
 
 def slice_batch(batch):
@@ -28,37 +31,15 @@ def slice_batch(batch):
 def build_config(cat_vocab_sizes, cont_features):
     EMB_DIM = 48
     ROW_DIM = 256
-    HEADS_F = 4
-    HEADS_S = 4
-    DEPTH_F = 1
-    DEPTH_S = 4
-    FFN_MULT = 2
-    DROPOUT = 0.10
-    LN_EPS = 1e-6
-    LSTM_HID = ROW_DIM
-    LSTM_LAYERS = 2
-    NUM_CLASSES = 2
-
-    field_cfg = FieldTransformerConfig(
-        d_model=EMB_DIM, n_heads=HEADS_F, depth=DEPTH_F,
-        ffn_mult=FFN_MULT, dropout=DROPOUT,
-        layer_norm_eps=LN_EPS, norm_first=True
-    )
-    seq_cfg = SequenceTransformerConfig(
-        d_model=ROW_DIM, n_heads=HEADS_S, depth=DEPTH_S,
-        ffn_mult=FFN_MULT, dropout=DROPOUT,
-        layer_norm_eps=LN_EPS, norm_first=True
-    )
-    lstm_cfg = LSTMConfig(
-        hidden_size=LSTM_HID, num_layers=LSTM_LAYERS,
-        num_classes=NUM_CLASSES, dropout=DROPOUT
-    )
+    field_cfg = FieldTransformerConfig(d_model=EMB_DIM, n_heads=4, depth=1, ffn_mult=2, dropout=0.10, layer_norm_eps=1e-6, norm_first=True)
+    seq_cfg = SequenceTransformerConfig(d_model=ROW_DIM, n_heads=4, depth=4, ffn_mult=2, dropout=0.10, layer_norm_eps=1e-6, norm_first=True)
+    lstm_cfg = LSTMConfig(hidden_size=ROW_DIM, num_layers=2, num_classes=2, dropout=0.10)
 
     return ModelConfig(
         cat_vocab_sizes=cat_vocab_sizes,
         cont_features=cont_features,
         emb_dim=EMB_DIM,
-        dropout=DROPOUT,
+        dropout=0.10,
         padding_idx=0,
         field_transformer=field_cfg,
         sequence_transformer=seq_cfg,
@@ -100,14 +81,14 @@ def generate_synthetic():
 
 def main(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    logger.info("Using device %s", device)
 
     if args.synthetic:
         train_df, encoders, cat_feats, cont_feats = generate_synthetic()
     else:
         if not os.path.exists(args.cache):
             raise FileNotFoundError(args.cache)
-        (train_df, _, _, encoders,
-         cat_feats, cont_feats, _) = torch.load(args.cache, weights_only=False)
+        train_df, _, _, encoders, cat_feats, cont_feats, _ = torch.load(args.cache, weights_only=False)
 
     cat_sizes = {c: len(encoders[c]["inv"]) for c in cat_feats}
     config = build_config(cat_sizes, cont_feats)
@@ -121,8 +102,7 @@ def main(args):
         window_size=args.window,
         stride=args.window,
     )
-    loader = DataLoader(ds, batch_size=args.batch_size, shuffle=True,
-                        collate_fn=collate_fn)
+    loader = DataLoader(ds, batch_size=args.batch_size, shuffle=True, collate_fn=collate_fn)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     crit_cat = nn.CrossEntropyLoss()
@@ -131,6 +111,7 @@ def main(args):
     model.train()
     sizes = [cat_sizes[c] for c in cat_feats]
     for ep in range(args.epochs):
+        ep_start = time.perf_counter()
         for batch in loader:
             inp_cat, inp_cont, inp_mask, tgt_cat, tgt_cont = slice_batch(batch)
             inp_cat = inp_cat.to(device)
@@ -150,7 +131,7 @@ def main(args):
             loss.backward()
             optimizer.step()
         torch.save(model.state_dict(), "pretrained_backbone.pt")
-        print(f"{datetime.now()} Epoch {ep+1}/{args.epochs} loss {loss.item():.4f}")
+        logger.info("Epoch %d/%d loss %.4f (%.2fs)", ep + 1, args.epochs, loss.item(), time.perf_counter() - ep_start)
 
 
 if __name__ == "__main__":
@@ -163,3 +144,4 @@ if __name__ == "__main__":
     p.add_argument("--synthetic", action="store_true")
     args = p.parse_args()
     main(args)
+
