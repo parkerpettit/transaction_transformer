@@ -1,11 +1,17 @@
 import os
 import time
+import logging
+from datetime import datetime
+
 import torch
 import torch.nn as nn
-from datetime import datetime
+
 from model import TransactionModel
 from utils import load_or_initialize_checkpoint, save_checkpoint
 from evaluate import evaluate_binary
+
+logger = logging.getLogger(__name__)
+
 
 def train(
     config,
@@ -15,24 +21,24 @@ def train(
     train_loader,
     val_loader,
 ):
-    """Full training loop for binary fraud classifier, with detailed logging."""
-    # 1) Device setup
+    """Training loop for binary fraud classifier with detailed logging."""
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"[{datetime.now()}] Device: {device}")
+    logger.info("Device: %s", device)
 
-    # 2) Model, loss, optimizer
     model = TransactionModel(config).to(device)
-    print(f"[{datetime.now()}] Initialized model with config: {config}")
-    if os.path.exists('pretrained_backbone.pt'):
-        state = torch.load('pretrained_backbone.pt', map_location=device)
+    logger.info("Initialized model with config: %s", config)
+
+    if os.path.exists("pretrained_backbone.pt"):
+        logger.info("Loading pretrained backbone")
+        state = torch.load("pretrained_backbone.pt", map_location=device)
         model.load_state_dict(state, strict=False)
         for name, param in model.named_parameters():
-            if not name.startswith('fraud_head'):
+            if not name.startswith("fraud_head"):
                 param.requires_grad = False
-    criterion = nn.CrossEntropyLoss(weight=torch.tensor([  0.5006, 401.1244], device='cuda:0'))
+
+    criterion = nn.CrossEntropyLoss(weight=torch.tensor([0.5006, 401.1244], device=device))
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
 
-    # 3) Checkpoint loading
     base_path = "/content/drive/MyDrive/summer_urop_25/datasets/txn_checkpoint.pt"
     best_val, start_epoch = load_or_initialize_checkpoint(
         base_path=base_path,
@@ -40,11 +46,10 @@ def train(
         model=model,
         optimizer=optimizer,
         cat_features=cat_features,
-        cont_features=cont_features
+        cont_features=cont_features,
     )
-    print(f"[{datetime.now()}] Resuming from epoch {start_epoch}, best validation loss = {best_val:.4f}")
+    logger.info("Resuming from epoch %d with best val %.4f", start_epoch, best_val)
 
-    # 4) Training loop
     patience = 5
     wait = 0
     total_epochs = config.total_epochs
@@ -52,7 +57,7 @@ def train(
 
     for epoch in range(start_epoch, total_epochs):
         epoch_start = time.perf_counter()
-        print(f"\n[{datetime.now()}] ===> Starting epoch {epoch+1}/{total_epochs}")
+        logger.info("Starting epoch %d/%d", epoch + 1, total_epochs)
 
         model.train()
         running_loss = 0.0
@@ -60,72 +65,68 @@ def train(
 
         for batch_idx, batch in enumerate(train_loader, 1):
             batch_start = time.perf_counter()
-
-            # --- Move data to device ---
-            inp_cat  = batch["cat"][:, :-1].to(device, non_blocking=True)
+            inp_cat = batch["cat"][:, :-1].to(device, non_blocking=True)
             inp_cont = batch["cont"][:, :-1].to(device, non_blocking=True)
             pad_mask = batch["pad_mask"][:, :-1].to(device, non_blocking=True).bool()
-            labels   = batch["label"].to(device, non_blocking=True)
-            # print(
-            #     f"[{datetime.now()}] Batch {batch_idx}/{len(train_loader)} shapes: "
-            #     f"inp_cat={inp_cat.shape}, inp_cont={inp_cont.shape}, "
-            #     f"pad_mask={pad_mask.shape}, labels={labels.shape}"
-            # )
-            # --- Forward / Backward ---
-            logits = model(inp_cat, inp_cont, padding_mask=pad_mask, mode='fraud')
-            loss   = criterion(logits, labels)
+            labels = batch["label"].to(device, non_blocking=True)
+
+            logits = model(inp_cat, inp_cont, padding_mask=pad_mask, mode="fraud")
+            loss = criterion(logits, labels)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
 
-            # --- Accumulate statistics ---
             batch_size = labels.size(0)
             running_loss += loss.item() * batch_size
             running_samples += batch_size
 
-            # --- Per-batch logging ---
             if batch_idx % log_interval == 0 or batch_idx == len(train_loader):
                 batch_time = time.perf_counter() - batch_start
                 avg_loss = running_loss / running_samples
-                print(
-                    f"[{datetime.now()}] Epoch {epoch+1} | "
-                    f"Batch {batch_idx}/{len(train_loader)} | "
-                    f"Batch Loss: {loss.item():.4f} | "
-                    f"Avg Loss: {avg_loss:.4f} | "
-                    f"Batch Time: {batch_time:.2f}s"
+                logger.info(
+                    "Epoch %d Batch %d/%d | Batch Loss %.4f | Avg Loss %.4f | Time %.2fs",
+                    epoch + 1,
+                    batch_idx,
+                    len(train_loader),
+                    loss.item(),
+                    avg_loss,
+                    batch_time,
                 )
 
         epoch_time = time.perf_counter() - epoch_start
         train_loss = running_loss / running_samples
-        print(
-            f"[{datetime.now()}] Epoch {epoch+1} finished in {epoch_time:.2f}s | "
-            f"Train Loss: {train_loss:.4f}"
-        )
+        logger.info("Epoch %d finished in %.2fs | Train Loss %.4f", epoch + 1, epoch_time, train_loss)
 
-        # 5) Validation
         val_start = time.perf_counter()
         val_loss, val_acc = evaluate_binary(model, val_loader, criterion, device)
         val_time = time.perf_counter() - val_start
-        print(
-            f"[{datetime.now()}] Validation | "
-            f"Loss: {val_loss:.4f} | Acc: {val_acc:.2%} | "
-            f"Time: {val_time:.2f}s"
+        logger.info(
+            "Validation | Loss %.4f | Acc %.2f%% | Time %.2fs",
+            val_loss,
+            val_acc * 100,
+            val_time,
         )
 
-        # 6) Early-stopping & checkpointing
         if val_loss < best_val - 1e-5:
             best_val = val_loss
             wait = 0
-            print(f"[{datetime.now()}] New best model (val_loss: {best_val:.4f}), saving checkpoint.")
+            logger.info("New best model (val_loss %.4f). Saving checkpoint.", best_val)
             save_checkpoint(
-                model, optimizer, epoch, best_val,
-                base_path, cat_features, cont_features, config
+                model,
+                optimizer,
+                epoch,
+                best_val,
+                base_path,
+                cat_features,
+                cont_features,
+                config,
             )
         else:
             wait += 1
-            print(f"[{datetime.now()}] No improvement for {wait}/{patience} epochs.")
+            logger.info("No improvement for %d/%d epochs", wait, patience)
             if wait >= patience:
-                print(f"[{datetime.now()}] Early stopping triggered. Stopping training.")
+                logger.info("Early stopping triggered")
                 break
 
-    print(f"[{datetime.now()}] Training complete. Best validation loss: {best_val:.4f}")
+    logger.info("Training complete. Best validation loss: %.4f", best_val)
+
