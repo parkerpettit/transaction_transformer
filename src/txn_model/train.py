@@ -23,6 +23,12 @@ def train(
     # 2) Model, loss, optimizer
     model = TransactionModel(config).to(device)
     print(f"[{datetime.now()}] Initialized model with config: {config}")
+    if os.path.exists('pretrained_backbone.pt'):
+        state = torch.load('pretrained_backbone.pt', map_location=device)
+        model.load_state_dict(state, strict=False)
+        for name, param in model.named_parameters():
+            if not name.startswith('fraud_head'):
+                param.requires_grad = False
     criterion = nn.CrossEntropyLoss(weight=torch.tensor([  0.5006, 401.1244], device='cuda:0'))
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
 
@@ -66,7 +72,7 @@ def train(
             #     f"pad_mask={pad_mask.shape}, labels={labels.shape}"
             # )
             # --- Forward / Backward ---
-            logits = model(inp_cat, inp_cont, padding_mask=pad_mask)
+            logits = model(inp_cat, inp_cont, padding_mask=pad_mask, mode='fraud')
             loss   = criterion(logits, labels)
             optimizer.zero_grad()
             loss.backward()
