@@ -76,6 +76,9 @@
 
 import torch
 import torch.nn as nn
+from txn_model.config import (ModelConfig, FieldTransformerConfig,
+                              SequenceTransformerConfig, LSTMConfig)
+from txn_model.model import TransactionModel
 
 def evaluate_binary(
     model: torch.nn.Module,
@@ -124,4 +127,44 @@ def evaluate_binary(
 
     model.train()
     return avg_loss, accuracy
+
+
+def smoke_test():
+    device = torch.device('cpu')
+    cat_sizes = {'cat': 3}
+    cont_feats = ['amt']
+    field_cfg = FieldTransformerConfig(
+        d_model=8, n_heads=1, depth=1,
+        ffn_mult=2, dropout=0.1,
+        layer_norm_eps=1e-5, norm_first=False
+    )
+    seq_cfg = SequenceTransformerConfig(
+        d_model=8, n_heads=1, depth=1,
+        ffn_mult=2, dropout=0.1,
+        layer_norm_eps=1e-5, norm_first=False
+    )
+    lstm_cfg = LSTMConfig(
+        hidden_size=8, num_layers=1,
+        num_classes=2, dropout=0.1
+    )
+    cfg = ModelConfig(
+        cat_vocab_sizes=cat_sizes,
+        cont_features=cont_feats,
+        emb_dim=8,
+        dropout=0.1,
+        padding_idx=0,
+        field_transformer=field_cfg,
+        sequence_transformer=seq_cfg,
+        lstm_config=lstm_cfg,
+        total_epochs=1,
+    )
+    model = TransactionModel(cfg).to(device)
+    cat = torch.randint(0, 3, (2, 5, 1))
+    cont = torch.randn(2, 5, 1)
+    mask = torch.zeros(2, 5, dtype=torch.bool)
+    fraud_logits = model(cat, cont, mask, mode='fraud')
+    ar_logits, ar_cont = model(cat[:, :-1], cont[:, :-1], mask[:, :-1], mode='ar')
+    print('fraud', fraud_logits.shape,
+          'ar_cat', ar_logits.shape,
+          'ar_cont', ar_cont.shape)
 
