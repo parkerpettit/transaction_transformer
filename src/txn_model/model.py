@@ -174,9 +174,9 @@ class TransactionModel(nn.Module):
         )
         # simple row projection: (K*D) -> M
         self.row_projector = nn.Linear(K * D, M)
-        # LSTM classifier
+        # LSTM classifier (fraud head)
         lstm_cfg = config.lstm_config
-        self.lstm = LSTMClassifier(
+        self.fraud_head = LSTMClassifier(
             input_size=M,
             hidden_size=lstm_cfg.hidden_size,
             num_layers=lstm_cfg.num_layers,
@@ -184,19 +184,37 @@ class TransactionModel(nn.Module):
             dropout=lstm_cfg.dropout
         )
 
+        hidden_dim = lstm_cfg.hidden_size
+        self.total_cat_size = sum(config.cat_vocab_sizes.values())
+        self.cat_offsets = torch.cumsum(
+            torch.tensor([0] + list(config.cat_vocab_sizes.values())), dim=0
+        )[:-1]
+        self.ar_cat_head = nn.Linear(hidden_dim, self.total_cat_size)
+        self.ar_cont_head = nn.Linear(hidden_dim, len(config.cont_features))
+
+    def _encode(self, cat: LongTensor, cont: Tensor, padding_mask: BoolTensor) -> Tensor:
+        B, L, _ = cat.shape
+        emb = self.embedder(cat, cont)          # (B*L, K, D)
+        intra = self.field_tfmr(emb)            # (B*L, K, D)
+        flat = intra.flatten(start_dim=1)       # (B*L, K*D)
+        row_repr = self.row_projector(flat).view(B, L, -1)  # (B, L, M)
+        seq_out = self.seq_tfmr(row_repr, padding_mask)     # (B, L, M)
+        lengths = (~padding_mask).sum(dim=1)
+        packed = pack_padded_sequence(
+            seq_out, lengths.cpu(), batch_first=True, enforce_sorted=False
+        )
+        _, (h_n, _) = self.fraud_head.lstm(packed)
+        return h_n[-1]  # (B, hidden_dim)
+
     def forward(self,
                 cat: LongTensor,
                 cont: Tensor,
-                padding_mask: BoolTensor) -> Tensor:
-        B, L, _ = cat.shape
-        # 1) embed per-field
-        emb = self.embedder(cat, cont)          # (B*L, K, D)
-        # 2) intra-row context
-        intra = self.field_tfmr(emb)            # (B*L, K, D)
-        # 3) flatten fields & project to row rep
-        flat = intra.flatten(start_dim=1)       # (B*L, K*D)
-        row_repr = self.row_projector(flat).view(B, L, -1)  # (B, L, M)
-        # 4) inter-row context
-        seq_out = self.seq_tfmr(row_repr, padding_mask)     # (B, L, M)
-        # 5) classification
-        return self.lstm(seq_out, padding_mask)             # (B, num_classes)
+                padding_mask: BoolTensor,
+                mode: str = 'fraud'):
+        hidden = self._encode(cat, cont, padding_mask)
+        if mode == 'ar':
+            logits_cat = self.ar_cat_head(hidden)
+            pred_cont = self.ar_cont_head(hidden)
+            return logits_cat, pred_cont
+        else:
+            return self.fraud_head.fc(hidden)
