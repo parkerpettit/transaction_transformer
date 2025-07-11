@@ -1,0 +1,94 @@
+_wandb:
+    value:
+        cli_version: 0.21.0
+        e:
+            migwygws1m8x77w8icy2q28t09ctzded:
+                args:
+                    - --config
+                    - configs/pretrain.yaml
+                codePath: src\txn_model\train_pretrain.py
+                codePathLocal: train_pretrain.py
+                cpu_count: 8
+                cpu_count_logical: 16
+                cudaVersion: "12.9"
+                disk:
+                    /:
+                        total: "1023336771584"
+                        used: "1003737985024"
+                email: ppettit@mit.edu
+                executable: C:\Users\petti\AppData\Local\Programs\Python\Python312\python.exe
+                git:
+                    commit: 9c28e050311d6c67499b271cee1e4e89f7038e88
+                    remote: https://github.com/parkerpettit/transaction_transformer.git
+                gpu: NVIDIA GeForce RTX 3070 Laptop GPU
+                gpu_count: 1
+                gpu_nvidia:
+                    - architecture: Ampere
+                      cudaCores: 5120
+                      memoryTotal: "8589934592"
+                      name: NVIDIA GeForce RTX 3070 Laptop GPU
+                      uuid: GPU-2320a74d-0541-0e63-75fd-4efc47371e62
+                host: PARKER
+                memory:
+                    total: "16542732288"
+                os: Windows-11-10.0.26100-SP0
+                program: C:\Users\petti\Documents\GitHub\transaction_transformer\src\txn_model\train_pretrain.py
+                python: CPython 3.12.1
+                root: C:\Users\petti\Documents\GitHub\transaction_transformer\src\txn_model
+                startedAt: "2025-07-11T19:15:08.963571Z"
+                writerId: migwygws1m8x77w8icy2q28t09ctzded
+        m: []
+        python_version: 3.12.1
+        t:
+            "1":
+                - 1
+                - 5
+                - 53
+                - 100
+            "2":
+                - 1
+                - 5
+                - 53
+                - 100
+            "3":
+                - 1
+                - 13
+                - 16
+            "4": 3.12.1
+            "5": 0.21.0
+            "8":
+                - 3
+            "12": 0.21.0
+            "13": windows-amd64
+batch_size:
+    value: 32
+cat_features:
+    value:
+        - User
+        - Card
+        - Use Chip
+        - Merchant Name
+        - Merchant City
+        - Merchant State
+        - Zip
+        - MCC
+        - Errors?
+        - Year
+        - Month
+        - Day
+        - Hour
+config:
+    value: configs/pretrain.yaml
+cont_features:
+    value:
+        - Amount
+data_dir:
+    value: data
+epochs:
+    value: 10
+lr:
+    value: 0.0005
+unfreeze:
+    value: false
+window:
+    value: 20

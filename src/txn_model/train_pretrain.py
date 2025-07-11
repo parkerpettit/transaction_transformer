@@ -18,6 +18,9 @@ from evaluate          import evaluate            # per-feature val metrics
 
 import yaml
 from utils import load_cfg, merge
+import time
+from tqdm.auto import tqdm  
+
 
 # --- 1. include --config flag -----------
 ap = argparse.ArgumentParser()
@@ -91,28 +94,51 @@ crit_cont = nn.MSELoss()
 optim     = torch.optim.Adam(model.parameters(), lr=args.lr)
 vocab_sizes = [len(enc[f]["inv"]) for f in cat_features]
 print("Starting training loop")
-log_interval = 10
+
+bar_fmt = (
+    "{l_bar}{bar:25}| "         # visual bar
+    "{n_fmt}/{total_fmt} batches "  # absolute progress
+    "({percentage:3.0f}%) | "   # %
+    "elapsed: {elapsed} | ETA: {remaining} | "  # timing
+    "{rate_fmt} | "             # batches / sec
+    "{postfix}"                 # losses go here
+)
+
 # ─── Training loop ─────────────────────────────────────────────────────────
 for ep in range(args.epochs):
-    print(f"Epoch {ep + 1} / {args.epochs} starting")
+    prog_bar = tqdm(
+        train_loader,
+        desc=f"Epoch {ep+1}/{args.epochs}",
+        unit="batch",
+        total=len(train_loader),
+        bar_format=bar_fmt,
+        ncols=240,               # wider for readability (optional)
+        leave=False,             # clear at epoch end
+    )
+    
     model.train(); tot_loss = 0; epoch_sample_count = 0; t0 = time.perf_counter()
-    index = 1
-    print(f"Total batches in this epoch: {len(train_loader)}")
-    for batch in train_loader:
+    
+    for batch in prog_bar:
+    
         cat_input, cont_inp, pad_mask, cat_tgt, cont_tgt = (t.to(device) for t in slice_batch(batch))
         cat_logits, cont_pred = model(cat_input, cont_inp, pad_mask.bool(), mode="ar")
-        if index % log_interval == 0:
-            print(f"Batch {index} / {len(train_loader)} starting.")
+
         # categorical losses field-wise
         start = 0; loss_cat = 0
         for i, vocab_len in enumerate(vocab_sizes):
             loss_cat += crit_cat(cat_logits[:, start:start+vocab_len], cat_tgt[:, i])
             start += vocab_len
-        loss = loss_cat + crit_cont(cont_pred, cont_tgt)
+        loss_cont = crit_cont(cont_pred, cont_tgt)
+        loss = loss_cat + loss_cont
 
         optim.zero_grad(); loss.backward(); optim.step()
         batch_size = cat_input.size(0); tot_loss += loss.item() * batch_size; epoch_sample_count += batch_size
 
+        prog_bar.set_postfix({
+            "tot":  f"{loss.item():.4f}",
+            "cat":  f"{loss_cat.item():.4f}",
+            "cont": f"{loss_cont.item():.4f}",
+        })
     train_loss = tot_loss / epoch_sample_count
     wandb.log({"train/loss": train_loss}, step=ep)
 
