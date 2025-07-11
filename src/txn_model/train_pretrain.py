@@ -4,6 +4,7 @@ Pre-train TransactionModel to predict the next transaction
 (categorical fields + continuous amount).  No fraud head.
 Saves encoder weights to  pretrained_backbone.pt
 """
+import wandb
 import argparse, time, torch, torch.nn as nn
 from pathlib import Path
 from torch.utils.data import DataLoader
@@ -38,20 +39,33 @@ file_params = load_cfg(cli.config)
 args = merge(cli, file_params)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+run = wandb.init(
+    project="txn-transformer",
+    name   = f"pretrain-{Path(args.data_dir).stem}",
+    config = vars(args),                 # log CLI & YAML parms
+)
+
 # ─── Data (load cache or create) ───────────────────────────────────────────
 cache = Path(args.data_dir) / "processed_data.pt"
 if cache.exists():
-    train_df, val_df, enc, cat_features, cont_features = torch.load(cache)
+    print("Processed data exists, loading now.")
+    train_df, val_df, enc, cat_features, cont_features = torch.load(cache,  weights_only=False)
+    print("Processed data loaded.")
 else:
+    print("Preprocessed data not found. Processing now.")
     raw = Path(args.data_dir) / "card_transaction.v1.csv"
     train_df, val_df, test_df, enc, cat_features, cont_features, scaler = preprocess(raw, args.cat_features, args.cont_features)
+    print("Finished processing data. Now saving.")
     torch.save((train_df, val_df, enc, cat_features, cont_features), cache)
-
-dl_train = DataLoader(
+    print("Processed data saved.")
+print("Creating training loader")
+train_loader = DataLoader(
     TxnDataset(train_df, cat_features[0], cat_features, cont_features,
                args.window, args.window),
     batch_size=args.batch_size, shuffle=True, collate_fn=collate_fn)
-dl_val   = DataLoader(
+
+print("Creating vailidation loader")
+val_loader   = DataLoader(
     TxnDataset(val_df, cat_features[0], cat_features, cont_features,
                args.window, args.window),
     batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn)
@@ -68,37 +82,56 @@ cfg = ModelConfig(
     sequence_transformer = SequenceTransformerConfig(256, 4, 4, 2, 0.10, 1e-6, True),
     lstm_config     = None,               # ← key: pre-train only
 )
+print("Initializing model")
 model = TransactionModel(cfg).to(device)
+wandb.watch(model, log="gradients", log_freq=100)
 
 crit_cat  = nn.CrossEntropyLoss()
 crit_cont = nn.MSELoss()
 optim     = torch.optim.Adam(model.parameters(), lr=args.lr)
 vocab_sizes = [len(enc[f]["inv"]) for f in cat_features]
-
+print("Starting training loop")
+log_interval = 10
 # ─── Training loop ─────────────────────────────────────────────────────────
 for ep in range(args.epochs):
-    model.train(); tot_loss = 0; nsamp = 0; t0 = time.perf_counter()
-    for batch in dl_train:
-        ic, xc, m, tc, td = (t.to(device) for t in slice_batch(batch))
-        out_cat, out_cont = model(ic, xc, m.bool(), mode="ar")
-
+    print(f"Epoch {ep + 1} / {args.epochs} starting")
+    model.train(); tot_loss = 0; epoch_sample_count = 0; t0 = time.perf_counter()
+    index = 1
+    print(f"Total batches in this epoch: {len(train_loader)}")
+    for batch in train_loader:
+        cat_input, cont_inp, pad_mask, cat_tgt, cont_tgt = (t.to(device) for t in slice_batch(batch))
+        cat_logits, cont_pred = model(cat_input, cont_inp, pad_mask.bool(), mode="ar")
+        if index % log_interval == 0:
+            print(f"Batch {index} / {len(train_loader)} starting.")
         # categorical losses field-wise
         start = 0; loss_cat = 0
-        for i, V in enumerate(vocab_sizes):
-            loss_cat += crit_cat(out_cat[:, start:start+V], tc[:, i])
-            start += V
-        loss = loss_cat + crit_cont(out_cont, td)
+        for i, vocab_len in enumerate(vocab_sizes):
+            loss_cat += crit_cat(cat_logits[:, start:start+vocab_len], cat_tgt[:, i])
+            start += vocab_len
+        loss = loss_cat + crit_cont(cont_pred, cont_tgt)
 
         optim.zero_grad(); loss.backward(); optim.step()
-        bs = ic.size(0); tot_loss += loss.item() * bs; nsamp += bs
+        batch_size = cat_input.size(0); tot_loss += loss.item() * batch_size; epoch_sample_count += batch_size
 
-    train_loss = tot_loss / nsamp
-    val_loss, feat_acc = evaluate(model, dl_val, cat_features,
+    train_loss = tot_loss / epoch_sample_count
+    wandb.log({"train/loss": train_loss}, step=ep)
+
+    val_loss, feat_acc = evaluate(model, val_loader, cat_features,
                                   {f: len(enc[f]["inv"]) for f in cat_features},
                                   crit_cat, crit_cont, device)
+    wandb.log({
+    "val/loss":  val_loss,
+    **{f"val/acc_{k}": v for k, v in feat_acc.items()}
+    }, step=ep)
     print(f"Epoch {ep+1:02}/{args.epochs} "
           f"| train {train_loss:.4f}  val {val_loss:.4f} "
           f"| Δt {time.perf_counter()-t0:.1f}s")
+    
+ckpt_path = Path(args.data_dir) / "pretrained_backbone.pt"
+torch.save(model.state_dict(), ckpt_path)
 
-torch.save(model.state_dict(), Path(args.data_dir) / "pretrained_backbone.pt")
+artifact = wandb.Artifact("backbone", type="model")
+artifact.add_file(str(ckpt_path))
+wandb.log_artifact(artifact)
+run.finish()   
 print("Pre-training complete ✓  backbone saved.")

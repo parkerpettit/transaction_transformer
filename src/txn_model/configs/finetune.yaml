@@ -9,7 +9,7 @@ cont_features: ["Amount"]
 
 epochs:      5
 batch_size:  32
-lr:          1e-4
+lr:          1.0e-4
 unfreeze:    false                 # true → train encoder too
 
 emb_dim:     48

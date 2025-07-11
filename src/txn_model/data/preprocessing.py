@@ -74,17 +74,28 @@ def preprocess(
     test_df  = subset("test")
     del df  # free RAM
 
-    # 8) Encode categoricals
-    cat_features = list(cat_features) + ["Hour"]
+    # 8) Encode categoricals ----------------------------------------------------
+    cat_features = [c for c in cat_features if c in train_df.columns]    
     encoders: Dict[str, Dict[str, Any]] = {}
     for c in cat_features:
+        # fit encoder on *train* only
         train_df[c] = train_df[c].astype("category")
         cats = train_df[c].cat.categories
-        mapping = {tok: idx + 2 for idx, tok in enumerate(cats)}
-        inv_array = np.array(["__PAD__", "__UNK__"] + list(cats), dtype=object)
+        mapping   = {tok: idx + 2 for idx, tok in enumerate(cats)}   # +2 reserve 0,1
+        inv_array = np.array(["__PAD__", "__UNK__", *cats], dtype=object)
         encoders[c] = {"map": mapping, "inv": inv_array}
+
+        # apply mapping to every split
         for split_df in (train_df, val_df, test_df):
-            split_df[c] = split_df[c].map(mapping).fillna(1).astype(np.int32)
+            codes = (
+                split_df[c]
+                .astype("object")          # <— ensure *not* categorical
+                .map(mapping)              # str  → float (with NaN)
+                .fillna(1)                 # NaN → __UNK__ code
+                .astype(np.int32)          # float → int
+            )
+            split_df[c] = codes            # now plain int column
+
 
     # 9) Scale continuous and downcast
     cont_features = list(cont_features)

@@ -65,9 +65,9 @@ def evaluate(
             start = end
 
         loss = loss_cat + crit_cont(pred_cont, tgt_cont)
-        bs   = inp_cat.size(0)
-        total_loss    += loss.item() * bs
-        total_samples += bs
+        batch_size   = inp_cat.size(0)
+        total_loss    += loss.item() * batch_size
+        total_samples += batch_size
 
     avg_loss = total_loss / total_samples
     feat_acc = {
@@ -139,10 +139,10 @@ def evaluate_binary(
             loss   = criterion(logits, y)
             preds  = logits.argmax(dim=1)
 
-        bs = y.size(0)
-        tot_loss   += loss.item() * bs
+        batch_size = y.size(0)
+        tot_loss   += loss.item() * batch_size
         tot_correct += (preds == y).sum().item()
-        tot_samples += bs
+        tot_samples += batch_size
 
         for cls_id in y.unique().tolist():
             mask = y == cls_id

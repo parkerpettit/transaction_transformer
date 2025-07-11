@@ -3,13 +3,13 @@ data_dir:    data         # folder with transactions.csv or processed_data.pt
 window:      20
 cat_features: ['User', 'Card', 'Use Chip',
        'Merchant Name', 'Merchant City', 'Merchant State', 'Zip', 'MCC',
-       'Errors?', 'Year','Month','Day','Time']
+       'Errors?', 'Year','Month','Day','Hour']
 
 cont_features: ["Amount"]
 # training
 epochs:      10
 batch_size:  32
-lr:          5e-4
+lr:          5.0e-4
 
 # model
 emb_dim:     48
