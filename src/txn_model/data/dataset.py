@@ -48,6 +48,9 @@ class TxnDataset(Dataset):
 
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
         logger.debug("Fetching sample %d", idx)
+
+        # print(f"[Dataset] __getitem__ index {idx}")
+
         return self.samples[idx]
 
 

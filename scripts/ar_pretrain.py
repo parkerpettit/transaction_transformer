@@ -128,6 +128,7 @@ def main(args):
         train_df, _, _, encoders, cat_feats, cont_feats, _ = torch.load(
             args.cache, weights_only=False
         )
+        print(f"[AR Pretrain] Loaded data from {args.cache}")
 
     cat_sizes = {c: len(encoders[c]["inv"]) for c in cat_feats}
     config = build_config(cat_sizes, cont_feats)
@@ -144,6 +145,9 @@ def main(args):
     loader = DataLoader(
         ds, batch_size=args.batch_size, shuffle=True, collate_fn=collate_fn
     )
+
+    print("[AR Pretrain] DataLoader created")
+
 
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     crit_cat = nn.CrossEntropyLoss()

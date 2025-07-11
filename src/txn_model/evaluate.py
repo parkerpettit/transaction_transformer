@@ -70,6 +70,10 @@ def evaluate_binary(
     }
 
 
+    print(f"[Evaluate] Avg loss {avg_loss:.4f}, accuracy {accuracy:.2%}")
+    for cls, acc in class_acc.items():
+        print(f"[Evaluate] Class {cls} accuracy {acc:.2%}")
+
 
     model.train()
     return avg_loss, accuracy, class_acc
