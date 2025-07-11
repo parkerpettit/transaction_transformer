@@ -53,7 +53,12 @@ def preprocess(
             df[c] = pd.to_numeric(df[c], downcast="float")
 
     # 5) Sort chronologically
-    df.sort_values(by=["Year", "Month", "Day", "Hour"], ascending=True, inplace=True, ignore_index=True)
+    df.sort_values(
+        by=[group_key, "Year", "Month", "Day", "Hour"],
+        ascending=True,
+        inplace=True,
+        ignore_index=True,
+    )
 
     # 6) Create train/val/test splits ensuring chronological grouping
     df["rank"] = df.groupby(group_key).cumcount()
@@ -62,7 +67,6 @@ def preprocess(
         df["rank"] < df["n_txns"] * train_frac, "train",
         np.where(df["rank"] < df["n_txns"] * (train_frac + val_frac), "val", "test")
     )
-
     # 7) Subset and drop intermediates
     drop_cols = ["rank", "n_txns", "split"]
     def subset(name: str) -> pd.DataFrame:

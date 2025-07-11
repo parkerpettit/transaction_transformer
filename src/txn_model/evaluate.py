@@ -77,6 +77,11 @@ def evaluate(
         for i, name in enumerate(cat_features)
     }
 
+    print("\n▶ Feature-wise Accuracy:")
+    for name, acc in feat_acc.items():
+        print(f"  - {name:<20}: {acc*100:.2f}%")
+    print(f"  └─ Avg Val Loss: {avg_loss:.4f}\n")
+
     model.train()           # restore training mode
     return avg_loss, feat_acc
 
@@ -156,5 +161,6 @@ def evaluate_binary(
     val_loss = tot_loss / tot_samples
     val_acc  = tot_correct / tot_samples
     class_acc = {c: cls_correct[c] / cls_total[c] for c in cls_total}
+    
 
     return val_loss, val_acc, class_acc

@@ -17,13 +17,42 @@ from model import TransactionModel
 from evaluate          import evaluate            # per-feature val metrics
 
 import yaml
-from utils import load_cfg, merge
+from utils import load_cfg, merge, load_ckpt
 import time
 from tqdm.auto import tqdm  
 from utils import save_ckpt
 import signal, sys
 
+def show_samples(cat_inp, cat_tgt, cat_preds,
+                 cont_tgt, cont_preds,
+                 enc, cat_features, cont_features,
+                 n=3):
+    """
+    cat_inp   : [B, W, F_cat]  (not used here but available if you want)
+    cat_tgt   : [B, F_cat]     codes of last timestep
+    cat_preds : [B, F_cat]     argmax codes
+    cont_tgt  : [B, F_cont]
+    cont_preds: [B, F_cont]
+    """
+    B = cat_tgt.size(0)
+    n = min(n, B)
 
+    # decode function
+    def d(code, feat_name):
+        inv = enc[feat_name]["inv"]
+        return inv[code] if code < len(inv) else f"<UNK:{code}>"
+
+    for b in range(n):
+        print(f"\n─ Sample {b} ─")
+        for i, feat in enumerate(cat_features):
+            tgt_code  = cat_tgt[b, i].item()
+            pred_code = cat_preds[b, i].item()
+            print(f"{feat:<18}: tgt={d(tgt_code, feat)} | pred={d(pred_code, feat)}")
+        for j, feat in enumerate(cont_features):
+            t_val = cont_tgt[b, j].item()
+            p_val = cont_preds[b, j].item()
+            print(f"{feat:<18}: tgt={t_val:>8.2f} | pred={p_val:>8.2f}")
+        print("─" * 40)
 
 def graceful_exit(signum=None, frame=None):
     """Save state, finish wandb, and exit immediately."""
@@ -110,7 +139,6 @@ cfg = ModelConfig(
 )
 print("Initializing model")
 model = TransactionModel(cfg).to(device)
-wandb.watch(model, log="gradients", log_freq=100)
 
 crit_cat  = nn.CrossEntropyLoss()
 crit_cont = nn.MSELoss()
@@ -132,20 +160,17 @@ start_epoch = 0
 best_val    = float("inf")
 
 ckpt_path = (Path(args.data_dir) / "pretrained_backbone.pt")
-if args.resume and ckpt_path.exists():
-    ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
-
-    # 1. weights
-    if isinstance(ckpt, dict) and "model" in ckpt:
-        model.load_state_dict(ckpt["model"])
-        optim.load_state_dict(ckpt["optim"])
-        start_epoch = ckpt["epoch"] + 1   # continue with next epoch
-        best_val    = ckpt["best_val"]
-        print(f"✓ Resumed from {ckpt_path} (epoch {start_epoch}, "
-              f"best val {best_val:.4f})")
-    else:                                 # weights-only fallback
-        model.load_state_dict(ckpt)
-        print(f"✓ Loaded pretrained weights from {ckpt_path}")
+if args.resume:
+    best_val, start_epoch = load_ckpt(
+        path=ckpt_path,
+        device=device,
+        model=model,
+        optimizer=optim,
+        cat_features=cat_features,
+        cont_features=cont_features,
+    )
+else:
+    best_val, start_epoch = float("inf"), 0
 
 # ─── wandb must know we’re resuming ───────────────────────────────────────
 run = wandb.init(
@@ -155,9 +180,26 @@ run = wandb.init(
     resume = "allow" if args.resume else False,            # <-- key line
 )
 
+wandb.watch(model, log="gradients", log_freq=100)
 
 # ─── Training loop ─────────────────────────────────────────────────────────
 best_val = float("inf")
+patience = 3 # number of acceptable consecutive epochs without validation loss improvement
+ep_without_improvement = 0
+# 1. Make sure 'User' is in the input
+sample = next(iter(train_loader))
+print("---------------------------------------------------------")
+print(sample["cat"][0, :, 0])       # first feature across the window
+# Should show the same user-ID repeated.
+
+# 2. Confirm class count
+print(train_df["User"].nunique())   # probably > 1 000
+
+# 3. Random baseline
+most_common = train_df["User"].value_counts().iloc[0] / len(train_df)
+print("Chance-level (always-pick-top):", most_common)
+print('------------------------------------------------------')
+
 try:
     for ep in range(start_epoch, args.epochs):
         prog_bar = tqdm(
@@ -171,7 +213,7 @@ try:
         )
         
         model.train(); tot_loss = 0; epoch_sample_count = 0; t0 = time.perf_counter()
-        
+        batch_idx = 0
         for batch in prog_bar:
         
             cat_input, cont_inp, pad_mask, cat_tgt, cont_tgt = (t.to(device) for t in slice_batch(batch))
@@ -212,7 +254,8 @@ try:
         print(f"Epoch {ep+1:02}/{args.epochs} "
             f"| train {train_loss:.4f}  val {val_loss:.4f} "
             f"| Δt {time.perf_counter()-t0:.1f}s")
-        if val_loss < best_val - 1e-5:   
+        if val_loss < best_val - 1e-5:  
+            ep_without_improvement = 0
             print("New validation loss better than previous. Saving checkpoint.")             
             best_val = val_loss                       
             ckpt_path = Path(args.data_dir) / "pretrained_backbone.pt"
@@ -222,6 +265,31 @@ try:
             )
             wandb.run.summary["best_val_loss"] = best_val # type: ignore
             print(f"New best ({best_val:.4f}) – checkpoint saved.")
+        else:
+            if ep_without_improvement >= patience:
+                break
+            else:
+                ep_without_improvement += 1
+        # after computing preds for this batch
+        if batch_idx == 0:   # print only from the first batch to avoid spam
+            # gather predictions in the same per-feature layout you used for accuracy
+            # (re-run the start/end loop or cache the per-feature argmax)
+            start = 0
+            preds_cat = torch.empty_like(cat_tgt)
+            for i, V in enumerate(vocab_sizes):
+                end = start + V
+                preds_cat[:, i] = cat_logits[:, start:end].argmax(dim=1)
+                start = end
+
+            show_samples(
+                cat_input, cat_tgt, preds_cat,
+                cont_tgt,  cont_pred,
+                enc, cat_features, cont_features,
+                n=3
+            )
+        batch_idx += 1
+
+                
 except KeyboardInterrupt:
     graceful_exit()
         
