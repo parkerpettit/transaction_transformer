@@ -141,7 +141,12 @@ def main(args):
         stride=args.window,
     )
     loader = DataLoader(
-        ds, batch_size=args.batch_size, shuffle=True, collate_fn=collate_fn
+        ds,
+        batch_size=args.batch_size,
+        shuffle=True,
+        collate_fn=collate_fn,
+        num_workers=2,
+        pin_memory=True,
     )
 
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
