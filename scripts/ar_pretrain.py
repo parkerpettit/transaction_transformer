@@ -17,6 +17,7 @@ from txn_model.config import (
 from txn_model.model import TransactionModel
 from txn_model.data.preprocessing import preprocess
 from txn_model.logging_utils import configure_logging
+from txn_model.path_utils import get_data_dir
 
 logger = configure_logging(__name__)
 
@@ -239,7 +240,8 @@ def main(args):
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
-    p.add_argument("--cache", default="processed_data.pt")
+    default_cache = os.path.join(get_data_dir(), "processed_data.pt")
+    p.add_argument("--cache", default=default_cache)
     p.add_argument("--epochs", type=int, default=1)
     p.add_argument("--batch_size", type=int, default=16)
     p.add_argument("--lr", type=float, default=1e-4)
