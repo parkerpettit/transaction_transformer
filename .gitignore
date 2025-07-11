@@ -198,3 +198,4 @@ cython_debug/
 txn_data_config.*
 *.feather
 *.pt
+*.csv

@@ -1,5 +1,5 @@
 import logging
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Any
 import pathlib
 import numpy as np
 import pandas as pd
@@ -76,7 +76,7 @@ def preprocess(
 
     # 8) Encode categoricals
     cat_features = list(cat_features) + ["Hour"]
-    encoders: Dict[str, Dict[str, np.ndarray]] = {}
+    encoders: Dict[str, Dict[str, Any]] = {}
     for c in cat_features:
         train_df[c] = train_df[c].astype("category")
         cats = train_df[c].cat.categories

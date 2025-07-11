@@ -77,3 +77,82 @@ def evaluate(
 
     model.train()           # restore training mode
     return avg_loss, feat_acc
+
+
+
+
+
+
+"""
+evaluate_binary.py
+------------------
+Validation for the fraud-classification phase.
+Returns aggregate loss, overall accuracy, and per-class accuracy.
+"""
+
+from typing import Dict, Tuple
+
+import torch
+from torch import nn
+
+
+@torch.no_grad()
+def evaluate_binary(
+    model: nn.Module,
+    loader: torch.utils.data.DataLoader,
+    criterion: nn.Module,
+    device: torch.device,
+) -> Tuple[float, float, Dict[int, float]]:
+    """
+    Parameters
+    ----------
+    model      : TransactionModel in 'fraud' mode
+    loader     : validation DataLoader
+    criterion  : nn.CrossEntropyLoss (or BCEWithLogitsLoss)
+    device     : torch.device
+
+    Returns
+    -------
+    val_loss   : float
+    val_acc    : float  (overall)
+    class_acc  : {class_id: accuracy}
+    """
+    model.eval()
+
+    tot_loss, tot_correct, tot_samples = 0.0, 0, 0
+    cls_correct: Dict[int, int] = {}
+    cls_total:   Dict[int, int] = {}
+
+    for batch in loader:
+        cat = batch["cat"][:, :-1].to(device)
+        con = batch["cont"][:, :-1].to(device)
+        pad = batch["pad_mask"][:, :-1].bool().to(device)
+        y   = batch["label"].to(device)
+
+        logits = model(cat, con, pad, mode="fraud")
+
+        if isinstance(criterion, nn.BCEWithLogitsLoss):
+            logits = logits.view(-1)
+            loss   = criterion(logits, y.float())
+            preds  = (torch.sigmoid(logits) > 0.5).long()
+        else:                                      # CrossEntropy
+            loss   = criterion(logits, y)
+            preds  = logits.argmax(dim=1)
+
+        bs = y.size(0)
+        tot_loss   += loss.item() * bs
+        tot_correct += (preds == y).sum().item()
+        tot_samples += bs
+
+        for cls_id in y.unique().tolist():
+            mask = y == cls_id
+            cls_correct[cls_id] = cls_correct.get(cls_id, 0) + (preds[mask] == y[mask]).sum().item()
+            cls_total[cls_id]   = cls_total.get(cls_id, 0)   + mask.sum().item()
+
+    model.train()
+
+    val_loss = tot_loss / tot_samples
+    val_acc  = tot_correct / tot_samples
+    class_acc = {c: cls_correct[c] / cls_total[c] for c in cls_total}
+
+    return val_loss, val_acc, class_acc

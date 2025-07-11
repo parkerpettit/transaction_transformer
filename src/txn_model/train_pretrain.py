@@ -44,7 +44,7 @@ if cache.exists():
     train_df, val_df, enc, cat_features, cont_features = torch.load(cache)
 else:
     raw = Path(args.data_dir) / "card_transaction.v1.csv"
-    train_df, val_df, enc, cat_features, cont_features = preprocess(raw, args.cat_features, args.cont_features)
+    train_df, val_df, test_df, enc, cat_features, cont_features, scaler = preprocess(raw, args.cat_features, args.cont_features)
     torch.save((train_df, val_df, enc, cat_features, cont_features), cache)
 
 dl_train = DataLoader(

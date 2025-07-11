@@ -33,47 +33,47 @@ from config import (
 #  Embedding + field transformer                                                         #
 # -------------------------------------------------------------------------------------- #
 class EmbeddingLayer(nn.Module):
-    """Embeds C categoricals and linearly projects F continuous features."""
-
+    """
+    Embeds C categorical fields and linearly projects F continuous fields.
+    Output shape: (B · L, K, D)   where  K = C + F
+    """
     def __init__(
         self,
         cat_vocab: Dict[str, int],
-        cont_features: List[str],
+        cont_feats: List[str],
         emb_dim: int,
         dropout: float,
         padding_idx: int,
     ):
         super().__init__()
-        self.cat_keys = list(cat_vocab)          # preserve ordering
-        self.cont_keys = cont_features
+        self.emb_dim: int   = emb_dim           # <- keep the plain int
+        self.cat_keys       = list(cat_vocab)
+        self.cont_keys      = cont_feats
 
         self.cat_emb = nn.ModuleDict(
             {k: nn.Embedding(v, emb_dim, padding_idx) for k, v in cat_vocab.items()}
         )
         self.cont_lin = nn.ModuleDict(
-            {k: nn.Linear(1, emb_dim) for k in cont_features}
+            {k: nn.Linear(1, emb_dim) for k in cont_feats}
         )
         self.dropout = nn.Dropout(dropout) if dropout else nn.Identity()
 
     def forward(self, cat: LongTensor, cont: Tensor) -> Tensor:
-        """
-        Returns
-        -------
-        Tensor (B·L, K, D) where K = C + F
-        """
         B, L, _ = cat.shape
-        D = next(iter(self.cat_emb.values())).embedding_dim
+        D: int  = self.emb_dim                      # plain int → type checker happy
+        K: int  = len(self.cat_keys) + len(self.cont_keys)
+
         cat_embs = [
-            self.dropout(self.cat_emb[k](cat[:, :, i]))      # (B, L, D)
+            self.dropout(self.cat_emb[k](cat[:, :, i]))
             for i, k in enumerate(self.cat_keys)
         ]
         cont_embs = [
             self.dropout(self.cont_lin[k](cont[:, :, i].unsqueeze(-1)))
             for i, k in enumerate(self.cont_keys)
         ]
-        # stack: (B, L, K, D)  ->  reshape: (B·L, K, D)
-        return torch.stack(cat_embs + cont_embs, dim=2).view(B * L, -1, D)
 
+        stacked = torch.stack(cat_embs + cont_embs, dim=2)   # (B, L, K, D)
+        return stacked.reshape(B * L, K, D)                  # (B·L, K, D)
 
 class FieldTransformer(nn.Module):
     """Intra-row interactions among K fields."""
@@ -216,22 +216,38 @@ class TransactionModel(nn.Module):
     # ╭──────────────────────────────────────────────────────────────────────────╮ #
     # │                               helpers                                    │ #
     # ╰──────────────────────────────────────────────────────────────────────────╯ #
-    def _encode(self, cat: LongTensor, cont: Tensor, pad_mask: BoolTensor) -> Tensor:
+    def _encode(self,
+            cat: LongTensor,
+            cont: Tensor,
+            pad_mask: BoolTensor) -> Tensor:
         """
-        Returns a sequence representation (B, H) for downstream heads.
+        Returns a (B, H) sequence representation suitable for both
+        fraud classification and autoregressive heads.
         """
         B, L, _ = cat.shape
+
+        # 1. embed & field-level transformer
         field = self.embedder(cat, cont)                    # (B·L, K, D)
         field = self.field_tf(field).flatten(start_dim=1)   # (B·L, K*D)
-        row_repr = self.row_proj(field).view(B, L, -1)      # (B, L, M)
-        seq_out = self.seq_tf(row_repr, pad_mask)           # (B, L, M)
+        row   = self.row_proj(field).view(B, L, -1)         # (B, L, M)
 
-        # LSTM summarisation (same as fraud head uses)
-        lengths = (~pad_mask).sum(dim=1).cpu()
-        packed = pack_padded_sequence(seq_out, lengths, batch_first=True, enforce_sorted=False)
-        _, (h_n, _) = self.lstm_head.lstm(packed)
-        return h_n[-1]                                      # (B, H)
+        # 2. sequence transformer
+        seq_out = self.seq_tf(row, pad_mask)                # (B, L, M)
 
+        # 3. summarize
+        if self.lstm_head is not None:
+            lengths = (~pad_mask).sum(dim=1).cpu()
+            packed = pack_padded_sequence(
+                seq_out, lengths, batch_first=True, enforce_sorted=False
+            )
+            _, (h_n, _) = self.lstm_head.lstm(packed)       # head exists
+            hidden = h_n[-1]                                # (B, H)
+        else:
+            # pre-train-only model → use last valid step 
+            idx   = lengths = (~pad_mask).sum(dim=1) - 1    # (B,)
+            hidden = seq_out[torch.arange(B, device=seq_out.device), idx]  # (B, M)
+
+        return hidden
     # ╭──────────────────────────────────────────────────────────────────────────╮ #
     # │                                 API                                      │ #
     # ╰──────────────────────────────────────────────────────────────────────────╯ #

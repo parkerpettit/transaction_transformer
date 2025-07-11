@@ -102,18 +102,21 @@ class ModelConfig:
     sequence_transformer:  SequenceTransformerConfig
     lstm_config: LSTMConfig | None  # none if pretraining
     # Internal consistency checks ------------------------------------------------
-    def __post_init__(self):
+    def __post_init__(self) -> None:
+        # emb_dim must match field-level d_model
         if self.emb_dim != self.field_transformer.d_model:
             raise ValueError(
-                f"`emb_dim` ({self.emb_dim}) must equal "
-                f"`field_transformer.d_model` ({self.field_transformer.d_model})."
+                "`emb_dim` ({}) must equal `field_transformer.d_model` ({})"
+                .format(self.emb_dim, self.field_transformer.d_model)
             )
-        if self.sequence_transformer.d_model != self.lstm_config.hidden_size:
-            # This is technically allowed, but usually unintended.
-            msg = (
-                "Warning: sequence_transformer.d_model "
-                f"({self.sequence_transformer.d_model}) "
-                "differs from lstm_config.hidden_size "
-                f"({self.lstm_config.hidden_size})."
-            )
-            print(msg)
+
+        # The sequence transformer’s output dim should usually match the
+        # LSTM hidden size – but only if an LSTM head is present.
+        if self.lstm_config is not None:
+            if self.sequence_transformer.d_model != self.lstm_config.hidden_size:
+                print(
+                    "Warning: sequence_transformer.d_model ({}) differs from "
+                    "lstm_config.hidden_size ({})."
+                    .format(self.sequence_transformer.d_model,
+                            self.lstm_config.hidden_size)
+                )

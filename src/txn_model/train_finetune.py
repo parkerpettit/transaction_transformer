@@ -13,7 +13,7 @@ from config            import (ModelConfig, FieldTransformerConfig,
 from data.dataset      import TxnDataset, collate_fn, slice_batch
 from data.preprocessing import preprocess
 from model import TransactionModel
-from evaluate   import evaluate      # loss + acc per class
+from evaluate   import evaluate, evaluate_binary      # loss + acc per class
 from utils             import save_ckpt, load_ckpt
 
 import yaml
@@ -51,11 +51,11 @@ else:
 
 dl_train = DataLoader(
     TxnDataset(train_df, cat_features[0], cat_features, cont_features,
-               args.window, args.window, label_col="is_fraud"),
+               args.window, args.window),
     batch_size=args.batch_size, shuffle=True, collate_fn=collate_fn)
 dl_val   = DataLoader(
     TxnDataset(val_df, cat_features[0], cat_features, cont_features,
-               args.window, args.window, label_col="is_fraud"),
+               args.window, args.window),
     batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn)
 
 # ─── Full model cfg (now includes LSTM head) ───────────────────────────────
