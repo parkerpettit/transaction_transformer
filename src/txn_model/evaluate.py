@@ -15,12 +15,15 @@ def evaluate_binary(
 ) -> tuple[float, float]:
     """Run a full pass over ``loader`` and compute loss + accuracy."""
     model.eval()
+    print("[Evaluate] Model set to eval mode")
     total_loss = 0.0
     total_correct = 0
     total_samples = 0
 
     with torch.no_grad():
         for batch_idx, batch in enumerate(loader, 1):
+            logger.debug("Processing eval batch %d", batch_idx)
+            print(f"[Evaluate] Batch {batch_idx}/{len(loader)}")
             inp_cat = batch["cat"][:, :-1].to(device)
             inp_cont = batch["cont"][:, :-1].to(device)
             pad_mask = batch["pad_mask"][:, :-1].to(device).bool()
@@ -45,9 +48,12 @@ def evaluate_binary(
             logger.debug(
                 "Eval batch %d/%d | loss %.4f", batch_idx, len(loader), loss.item()
             )
+            print(f"[Evaluate] loss={loss.item():.4f}")
 
     avg_loss = total_loss / total_samples
     accuracy = total_correct / total_samples
+
+    print(f"[Evaluate] Avg loss {avg_loss:.4f}, accuracy {accuracy:.2%}")
 
     model.train()
     return avg_loss, accuracy

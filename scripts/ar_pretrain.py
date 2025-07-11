@@ -14,6 +14,7 @@ from txn_model.data.preprocessing import preprocess
 from txn_model.logging_utils import configure_logging
 
 logger = configure_logging(__name__)
+print("[AR Pretrain] Logger configured")
 
 
 def slice_batch(batch):
@@ -82,13 +83,16 @@ def generate_synthetic():
 def main(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info("Using device %s", device)
+    print(f"[AR Pretrain] Using device {device}")
 
     if args.synthetic:
         train_df, encoders, cat_feats, cont_feats = generate_synthetic()
+        print("[AR Pretrain] Using synthetic dataset")
     else:
         if not os.path.exists(args.cache):
             raise FileNotFoundError(args.cache)
         train_df, _, _, encoders, cat_feats, cont_feats, _ = torch.load(args.cache, weights_only=False)
+        print(f"[AR Pretrain] Loaded data from {args.cache}")
 
     cat_sizes = {c: len(encoders[c]["inv"]) for c in cat_feats}
     config = build_config(cat_sizes, cont_feats)
@@ -103,6 +107,7 @@ def main(args):
         stride=args.window,
     )
     loader = DataLoader(ds, batch_size=args.batch_size, shuffle=True, collate_fn=collate_fn)
+    print("[AR Pretrain] DataLoader created")
 
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     crit_cat = nn.CrossEntropyLoss()
@@ -112,6 +117,7 @@ def main(args):
     sizes = [cat_sizes[c] for c in cat_feats]
     for ep in range(args.epochs):
         ep_start = time.perf_counter()
+        print(f"[AR Pretrain] Epoch {ep + 1}/{args.epochs} start")
         for batch in loader:
             inp_cat, inp_cont, inp_mask, tgt_cat, tgt_cont = slice_batch(batch)
             inp_cat = inp_cat.to(device)
@@ -132,6 +138,7 @@ def main(args):
             optimizer.step()
         torch.save(model.state_dict(), "pretrained_backbone.pt")
         logger.info("Epoch %d/%d loss %.4f (%.2fs)", ep + 1, args.epochs, loss.item(), time.perf_counter() - ep_start)
+        print(f"[AR Pretrain] Epoch {ep + 1} loss {loss.item():.4f}")
 
 
 if __name__ == "__main__":
@@ -143,5 +150,6 @@ if __name__ == "__main__":
     p.add_argument("--window", type=int, default=10)
     p.add_argument("--synthetic", action="store_true")
     args = p.parse_args()
+    print("[AR Pretrain] Starting main")
     main(args)
 
