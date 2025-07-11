@@ -186,6 +186,8 @@ def main(args):
         model.eval()
         val_loss = 0.0
         val_samples = 0
+        feature_correct = [0 for _ in cat_feats]
+        feature_total = [0 for _ in cat_feats]
         with torch.no_grad():
             for batch in loader:
                 inp_cat, inp_cont, inp_mask, tgt_cat, tgt_cont = slice_batch(batch)
@@ -201,13 +203,21 @@ def main(args):
                 loss_cat = 0.0
                 for i, V in enumerate(sizes):
                     end = start + V
-                    loss_cat += crit_cat(logits_cat[:, start:end], tgt_cat[:, i])
+                    logits = logits_cat[:, start:end]
+                    targets = tgt_cat[:, i]
+                    loss_cat += crit_cat(logits, targets)
+                    preds = logits.argmax(dim=1)
+                    feature_correct[i] += (preds == targets).sum().item()
+                    feature_total[i] += targets.numel()
                     start = end
                 l = loss_cat + crit_cont(pred_cont, tgt_cont)
                 batch_size = inp_cat.size(0)
                 val_loss += l.item() * batch_size
                 val_samples += batch_size
         val_loss /= val_samples
+        feature_acc = [
+            (c / t) if t > 0 else 0.0 for c, t in zip(feature_correct, feature_total)
+        ]
         model.train()
         torch.save(model.state_dict(), "pretrained_backbone.pt")
         logger.info(
@@ -218,9 +228,13 @@ def main(args):
             val_loss,
             time.perf_counter() - ep_start,
         )
+        for name, acc in zip(cat_feats, feature_acc):
+            logger.info("Feature %s acc %.2f%%", name, acc * 100)
         print(
             f"[AR Pretrain] Epoch {ep + 1} loss {loss.item():.4f} val_loss {val_loss:.4f}"
         )
+        for name, acc in zip(cat_feats, feature_acc):
+            print(f"[AR Pretrain] {name} acc {acc*100:.2f}%")
 
 
 if __name__ == "__main__":
