@@ -39,7 +39,9 @@ def train(
             if not name.startswith("fraud_head"):
                 param.requires_grad = False
 
-    criterion = nn.CrossEntropyLoss(weight=torch.tensor([0.5006, 401.1244], device=device))
+    criterion = nn.CrossEntropyLoss(
+        weight=torch.tensor([0.5006, 401.1244], device=device)
+    )
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
 
     base_path = "/content/drive/MyDrive/summer_urop_25/datasets/txn_checkpoint.pt"
@@ -105,11 +107,18 @@ def train(
 
         epoch_time = time.perf_counter() - epoch_start
         train_loss = running_loss / running_samples
-        logger.info("Epoch %d finished in %.2fs | Train Loss %.4f", epoch + 1, epoch_time, train_loss)
+        logger.info(
+            "Epoch %d finished in %.2fs | Train Loss %.4f",
+            epoch + 1,
+            epoch_time,
+            train_loss,
+        )
         print(f"[Train] Epoch {epoch + 1} done. Train loss {train_loss:.4f}")
 
         val_start = time.perf_counter()
-        val_loss, val_acc = evaluate_binary(model, val_loader, criterion, device)
+        val_loss, val_acc, class_acc = evaluate_binary(
+            model, val_loader, criterion, device
+        )
         val_time = time.perf_counter() - val_start
         logger.info(
             "Validation | Loss %.4f | Acc %.2f%% | Time %.2fs",
@@ -117,7 +126,11 @@ def train(
             val_acc * 100,
             val_time,
         )
+        for cls, acc in class_acc.items():
+            logger.info("Class %s Acc %.2f%%", cls, acc * 100)
         print(f"[Train] Validation loss {val_loss:.4f} acc {val_acc*100:.2f}%")
+        for cls, acc in class_acc.items():
+            print(f"[Train] Class {cls} acc {acc*100:.2f}%")
 
         if val_loss < best_val - 1e-5:
             best_val = val_loss
@@ -145,4 +158,3 @@ def train(
 
     logger.info("Training complete. Best validation loss: %.4f", best_val)
     print(f"[Train] Training complete. Best val {best_val:.4f}")
-
