@@ -1,162 +1,134 @@
-import os
-import time
-import torch
+"""
+chkpt.py
+~~~~~~~~
+Light-weight checkpoint helpers used by the training loop.  Keeps *one* file
+(current run) plus automatically renames incompatible old checkpoints so they
+are never overwritten by accident.
+
+Any module may simply::
+
+    from chkpt import save_ckpt, load_ckpt
+"""
+
+from __future__ import annotations
 import logging
+import time
+from dataclasses import asdict
 from datetime import datetime
-
-def save_checkpoint(model, optimizer, epoch, best_val, path, cat_features, cont_features, config):
-    logger = logging.getLogger(__name__)
-    logger.info("Saving checkpoint to %s at epoch %d", path, epoch)
-    torch.save({
-        "epoch":       epoch,
-        "best_val":    best_val,
-        "model_state": model.state_dict(),
-        "optim_state": optimizer.state_dict(),
-        "cat_features": cat_features,
-        "cont_features": cont_features,
-        "config": config
-    }, path)
-
-    # ── verification ──
-    cp = torch.load(path, map_location="cpu", weights_only=False)
-    assert cp["epoch"] == epoch,  "checkpoint epoch mismatch – file not overwritten?"
-
-    mod_time = time.ctime(os.path.getmtime(path))
-    size_mb  = os.path.getsize(path) / 1_048_576
-    logger.info("Checkpoint for epoch %d written (%.1f MB, %s)", epoch, size_mb, mod_time)
-
-
-def load_or_initialize_checkpoint(
-    base_path: str,
-    device: torch.device,
-    model: torch.nn.Module,
-    optimizer: torch.optim.Optimizer,
-    cat_features: list[str],
-    cont_features: list[str]
-) -> tuple[float, int]:
-    """
-    Load checkpoint if it exists and matches the feature lists; otherwise rename
-    the old checkpoint and start fresh.
-
-    Args:
-        base_path: Path to the checkpoint file.
-        device: Torch device for loading.
-        model: The model to load state into.
-        optimizer: The optimizer to load state into.
-        cat_features: Current list of categorical feature names.
-        cont_features: Current list of continuous feature names.
-
-    Returns:
-        best_val: Best validation loss (infinite if starting fresh).
-        start_epoch: Epoch number to start training from (1-based).
-    """
-    logger = logging.getLogger(__name__)
-    logger.info("Loading checkpoint from %s", base_path)
-    if os.path.exists(base_path):
-        ckpt = torch.load(base_path, map_location=device, weights_only=False)
-        old_cat = ckpt.get("cat_features", [])
-        old_cont = ckpt.get("cont_features", [])
-        mismatch_cat = old_cat != cat_features
-        mismatch_cont = old_cont != cont_features
-
-        if mismatch_cat or mismatch_cont:
-            # Report mismatches
-            logger.warning("Feature mismatch detected in checkpoint:")
-            if mismatch_cat:
-                logger.warning("   Categorical features differ: saved=%s now=%s", old_cat, cat_features)
-            if mismatch_cont:
-                logger.warning("   Continuous features differ: saved=%s now=%s", old_cont, cont_features)
-
-            # Rename old checkpoint
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            feat_sig = f"C{len(old_cat)}_Ct{len(old_cont)}"
-            new_name = f"txn_old_{feat_sig}_{timestamp}.pt"
-            os.rename(base_path, new_name)
-            logger.info("Renamed old checkpoint to: %s", new_name)
-
-            best_val = float("inf")
-            start_epoch = 0
-        else:
-            # Safe to resume
-            model.load_state_dict(ckpt["model_state"])
-            optimizer.load_state_dict(ckpt["optim_state"])
-            best_val = ckpt.get("best_val", float("inf"))
-            start_epoch = ckpt.get("epoch", 0) + 1
-    else:
-        best_val = float("inf")
-        start_epoch = 0
-
-    logger.info("Checkpoint load result: best_val=%.4f, start_epoch=%d", best_val, start_epoch)
-    return best_val, start_epoch
+from pathlib import Path
+from typing import List, Tuple
 
 import torch
-import numpy as np
+from torch import nn, optim
 
-def extract_latents_per_card(df_split, model, cat_cols, cont_cols, device):
+from config import ModelConfig   # only for typing / pretty storage
+
+log = logging.getLogger(__name__)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+#  save
+# ──────────────────────────────────────────────────────────────────────────────
+def save_ckpt(
+    model: nn.Module,
+    optimizer: optim.Optimizer,
+    epoch: int,
+    best_val: float,
+    path: str | Path,
+    cat_features: List[str],
+    cont_features: List[str],
+    cfg: ModelConfig,
+) -> None:
     """
-    One‐pass per‐card latent extraction for a TransactionModel.
-
-    df_split : DataFrame (train_df / val_df / test_df), with encoded & scaled features
-    model    : your TransactionModel instance
-    cat_cols : list of categorical column names
-    cont_cols: list of continuous column names
-    device   : torch.device('cuda') or ('cpu')
-
-    Returns:
-      X (N×D) latent matrix and y (N,) label vector
+    Persist training state to *path* and sanity-check that it was written.
     """
-    logger = logging.getLogger(__name__)
-    logger.info("Extracting latents per card")
-    model.eval()
-    X_parts, y_parts = [], []
+    path = Path(path)
+    log.info("Saving checkpoint → %s (epoch %d)", path, epoch)
 
-    with torch.no_grad():
-        for cc, g in df_split.groupby("cc_num", sort=False):
-            logger.debug("Processing card %s with %d rows", cc, len(g))
-            # Build tensors of shape (1, L, C) and (1, L, F)
-            L = len(g)
-            cat_tensor  = torch.tensor(
-                g[cat_cols].values, dtype=torch.long, device=device
-            ).unsqueeze(0)                 # (1, L, C)
-            cont_tensor = torch.tensor(
-                g[cont_cols].values, dtype=torch.float32, device=device
-            ).unsqueeze(0)                 # (1, L, F)
-            pad_mask = torch.zeros(
-                (1, L), dtype=torch.bool, device=device
-            )                               # no padding in full-history mode
+    torch.save(
+        {
+            "epoch":        epoch,
+            "best_val":     best_val,
+            "model_state":  model.state_dict(),
+            "optim_state":  optimizer.state_dict(),
+            "cat_features": cat_features,
+            "cont_features": cont_features,
+            "config":       asdict(cfg),
+        },
+        path,
+    )
 
-            # 1) Embed
-            embeddings = model.embedder(cat_tensor, cont_tensor)  # (1, L, E)
+    # quick verification
+    cp = torch.load(path, map_location="cpu", weights_only=False)
+    assert cp["epoch"] == epoch, "checkpoint epoch mismatch – write error?"
 
-            # 2) Field Transformer + flatten
-            ft = model.field_transformer(embeddings)              # (1, L, k, d)
-            intra = ft.flatten(start_dim=1)                       # (1, L*k*d)
-
-            # 3) Row projection back to sequence shape
-            row_repr = model.row_projector(intra)                 # (1, L*m_flat)
-            row_repr = row_repr.view(1, L, -1)                    # (1, L, m)
-
-            # 4) Sequence Transformer
-            seq_out = model.sequence_transformer(
-                row_repr, padding_mask=pad_mask
-            )                                                     # (1, L, m)
-
-            # 5) Project *every* position to latent space
-            seq_flat   = seq_out.view(L, -1)                      # (L, m)
-            latent_all = model.output_projector(seq_flat)         # (L, k*d)
-
-            # 6) Collect
-            X_parts.append(latent_all.cpu().numpy())              # list of (L, D)
-            y_parts.append(g["is_fraud"].to_numpy())              # list of (L,)
-
-    # Concatenate all cards
-    X = np.vstack(X_parts)                                     # (ΣL, D)
-    y = np.concatenate(y_parts)                                # (ΣL,)
-    logger.info("Extracted latents shape %s", X.shape)
-    return X, y
+    sz = path.stat().st_size / 1_048_576
+    log.info("Checkpoint written (%.1f MB, %s)", sz, time.ctime(path.stat().st_mtime))
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+#  load / resume
+# ──────────────────────────────────────────────────────────────────────────────
+def load_ckpt(
+    path: str | Path,
+    device: torch.device,
+    model: nn.Module,
+    optimizer: optim.Optimizer,
+    cat_features: List[str],
+    cont_features: List[str],
+) -> Tuple[float, int]:
+    """
+    Returns
+    -------
+    best_val : float
+        Best validation loss stored in checkpoint; inf if starting from scratch.
+    start_epoch : int
+        Epoch index to continue with (0-based). 0 means train from scratch.
+    """
+    path = Path(path)
+    log.info("↺  Looking for checkpoint in %s", path)
+
+    if not path.exists():
+        log.info("No checkpoint found – starting fresh.")
+        return float("inf"), 0
+
+    ckpt = torch.load(path, map_location=device, weights_only=False)
+    saved_cat, saved_cont = ckpt.get("cat_features", []), ckpt.get("cont_features", [])
+
+    if saved_cat != cat_features or saved_cont != cont_features:
+        # ── feature lists changed – archive old file ───────────────────────
+        log.warning("Feature set changed since last run – archiving old checkpoint.")
+        if saved_cat != cat_features:
+            log.warning("   categorical: %s → %s", saved_cat, cat_features)
+        if saved_cont != cont_features:
+            log.warning("   continuous  : %s → %s", saved_cont, cont_features)
+
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        archive_name = path.with_name(f"{path.stem}_old_{ts}{path.suffix}")
+        path.rename(archive_name)
+        log.info("Old checkpoint moved to %s", archive_name)
+
+        return float("inf"), 0
+
+    # ── safe to resume ─────────────────────────────────────────────────────
+    model.load_state_dict(ckpt["model_state"])
+    optimizer.load_state_dict(ckpt["optim_state"])
+    best_val = ckpt.get("best_val", float("inf"))
+    start_ep = ckpt.get("epoch", 0) + 1
+
+    log.info("Resumed from epoch %d  (best_val %.4f)", start_ep, best_val)
+    return best_val, start_ep
 
 
-    
+# utils_cfg.py
+import yaml, argparse, pathlib
 
+def load_cfg(path: str | pathlib.Path) -> dict:
+    with open(path, "r") as f:
+        return yaml.safe_load(f)
+
+def merge(cli_args: argparse.Namespace, file_dict: dict) -> argparse.Namespace:
+    """File values are defaults; CLI flags override if given."""
+    merged = vars(cli_args).copy()
+    merged = {k: (v if v is not None else file_dict.get(k)) for k, v in merged.items()}
+    return argparse.Namespace(**merged)

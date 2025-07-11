@@ -1,6 +1,6 @@
 import logging
 from typing import List, Dict, Tuple
-
+import pathlib
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
@@ -11,7 +11,7 @@ import torch.nn.functional as F
 logger = logging.getLogger(__name__)
 
 def preprocess(
-    file: str,
+    file: pathlib.Path,
     cat_features: List[str],
     cont_features: List[str],
     group_key: str = "User",
@@ -30,8 +30,7 @@ def preprocess(
 ]:
     """Efficient vectorized preprocessing for transaction data."""
     # 1) Read only needed columns
-    usecols = [*cat_features, *cont_features, group_key, time_col, "Is Fraud?", "Year", "Month", "Day"]
-    df = pd.read_feather(file, columns=usecols)
+    df = pd.read_csv(file)
 
     # 2) Generate binary fraud flag
     df["is_fraud"] = df["Is Fraud?"].str.lower().map({"yes": 1, "no": 0}).astype(np.int8)
@@ -76,9 +75,9 @@ def preprocess(
     del df  # free RAM
 
     # 8) Encode categoricals
-    cat_feats = list(cat_features) + ["Hour"]
+    cat_features = list(cat_features) + ["Hour"]
     encoders: Dict[str, Dict[str, np.ndarray]] = {}
-    for c in cat_feats:
+    for c in cat_features:
         train_df[c] = train_df[c].astype("category")
         cats = train_df[c].cat.categories
         mapping = {tok: idx + 2 for idx, tok in enumerate(cats)}
@@ -88,11 +87,11 @@ def preprocess(
             split_df[c] = split_df[c].map(mapping).fillna(1).astype(np.int32)
 
     # 9) Scale continuous and downcast
-    cont_feats = list(cont_features)
-    scaler = StandardScaler().fit(train_df[cont_feats].to_numpy())
+    cont_features = list(cont_features)
+    scaler = StandardScaler().fit(train_df[cont_features].to_numpy())
     for df_ in (train_df, val_df, test_df):
-        arr = scaler.transform(df_[cont_feats])
-        df_[cont_feats] = arr.astype(np.float32)
+        arr = scaler.transform(df_[cont_features])
+        df_[cont_features] = arr.astype(np.float32)
 
-    return train_df, val_df, test_df, encoders, cat_feats, cont_feats, scaler
+    return train_df, val_df, test_df, encoders, cat_features, cont_features, scaler
 

@@ -1,220 +1,259 @@
+"""
+transaction_model.py
+--------------------
+Clean, internally-consistent re-implementation of the tabular-sequence model.
+
+Shapes (all tensors use batch-first convention):
+    cat          : (B, L, C)   categorical token ids
+    cont         : (B, L, F)   continuous features
+    pad_mask     : (B, L)      True for PAD positions
+    field_out    : (B·L, K, D)
+    row_repr     : (B, L, M)
+    seq_out      : (B, L, M)
+    hidden       : (B, H)      final sequence representation
+"""
+
+from __future__ import annotations
+import math
+from typing import Dict, List
+
 import torch
 import torch.nn as nn
 from torch import Tensor, LongTensor, BoolTensor
-from torch.nn.utils.rnn import pack_padded_sequence
-from config import ModelConfig
-import math
+from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
+from config import (
+    ModelConfig,
+    FieldTransformerConfig,
+    SequenceTransformerConfig,
+    LSTMConfig,
+)
+
+# -------------------------------------------------------------------------------------- #
+#  Embedding + field transformer                                                         #
+# -------------------------------------------------------------------------------------- #
 class EmbeddingLayer(nn.Module):
-    """
-    Embedding layer for tabular transactions.
+    """Embeds C categoricals and linearly projects F continuous features."""
 
-    - Embeds each of C categorical fields via individual nn.Embedding tables
-    - Projects F continuous fields via individual nn.Linear layers
-    - Returns a (B*L, K, D) tensor where K is the total number of features (C + F).
-    """
-    def __init__(self,
-                 cat_vocab_sizes: dict[str, int],
-                 cont_features: list[str],
-                 emb_dim: int,
-                 dropout: float,
-                 padding_idx: int):
+    def __init__(
+        self,
+        cat_vocab: Dict[str, int],
+        cont_features: List[str],
+        emb_dim: int,
+        dropout: float,
+        padding_idx: int,
+    ):
         super().__init__()
-        self.cat_embeds = nn.ModuleDict({
-            f: nn.Embedding(cat_vocab_sizes[f], emb_dim, padding_idx)
-            for f in cat_vocab_sizes
-        })
-        self.cont_proj = nn.ModuleDict({
-            f: nn.Linear(1, emb_dim)
-            for f in cont_features
-        })
-        self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
+        self.cat_keys = list(cat_vocab)          # preserve ordering
+        self.cont_keys = cont_features
+
+        self.cat_emb = nn.ModuleDict(
+            {k: nn.Embedding(v, emb_dim, padding_idx) for k, v in cat_vocab.items()}
+        )
+        self.cont_lin = nn.ModuleDict(
+            {k: nn.Linear(1, emb_dim) for k in cont_features}
+        )
+        self.dropout = nn.Dropout(dropout) if dropout else nn.Identity()
 
     def forward(self, cat: LongTensor, cont: Tensor) -> Tensor:
+        """
+        Returns
+        -------
+        Tensor (B·L, K, D) where K = C + F
+        """
         B, L, _ = cat.shape
-        D = next(iter(self.cat_embeds.values())).embedding_dim
+        D = next(iter(self.cat_emb.values())).embedding_dim
+        cat_embs = [
+            self.dropout(self.cat_emb[k](cat[:, :, i]))      # (B, L, D)
+            for i, k in enumerate(self.cat_keys)
+        ]
+        cont_embs = [
+            self.dropout(self.cont_lin[k](cont[:, :, i].unsqueeze(-1)))
+            for i, k in enumerate(self.cont_keys)
+        ]
+        # stack: (B, L, K, D)  ->  reshape: (B·L, K, D)
+        return torch.stack(cat_embs + cont_embs, dim=2).view(B * L, -1, D)
 
-        cat_embs = [self.dropout(self.cat_embeds[f](cat[:, :, i]))
-                    for i, f in enumerate(self.cat_embeds)]
-        cont_embs = [self.dropout(self.cont_proj[f](cont[:, :, i].unsqueeze(-1)))
-                     for i, f in enumerate(self.cont_proj)]
-
-        x = torch.stack(cat_embs + cont_embs, dim=2)  # (B, L, K, D)
-        return x.reshape(B * L, -1, D)                # (B*L, K, D)
 
 class FieldTransformer(nn.Module):
-    """
-    Intra-row field interaction via TransformerEncoder
-    """
-    def __init__(self, d_model: int, n_heads: int, depth: int = 2,
-                 ffn_mult: int = 4, dropout: float = 0.1,
-                 layer_norm_eps: float = 1e-5, norm_first: bool = False):
+    """Intra-row interactions among K fields."""
+
+    def __init__(self, cfg: FieldTransformerConfig):
         super().__init__()
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=d_model, nhead=n_heads,
-            dim_feedforward=ffn_mult * d_model,
-            dropout=dropout, activation="relu",
-            layer_norm_eps=layer_norm_eps,
-            batch_first=True, norm_first=norm_first
+        layer = nn.TransformerEncoderLayer(
+            d_model=cfg.d_model,
+            nhead=cfg.n_heads,
+            dim_feedforward=cfg.ffn_mult * cfg.d_model,
+            dropout=cfg.dropout,
+            activation="relu",
+            layer_norm_eps=cfg.layer_norm_eps,
+            batch_first=True,
+            norm_first=cfg.norm_first,
         )
-        self.encoder = nn.TransformerEncoder(
-            encoder_layer, num_layers=depth,
-            norm=nn.LayerNorm(d_model, eps=layer_norm_eps)
-        )
+        self.encoder = nn.TransformerEncoder(layer, num_layers=cfg.depth)
 
-    def forward(self, x: Tensor) -> Tensor:
-        # x: (B*L, K, D)
-        return self.encoder(x)  # (B*L, K, D)
+    def forward(self, x: Tensor) -> Tensor:           # (B·L, K, D)
+        return self.encoder(x)                        # (B·L, K, D)
 
-class PositionalEncoding(nn.Module):
-    """Sin-cos positional encoding"""
-    def forward(self, x: Tensor) -> Tensor:
-        B, L, D = x.shape
-        device = x.device
-        pos = torch.arange(L, device=device).unsqueeze(1).float()
-        div_term = torch.exp(
-            torch.arange(0, D, 2, device=device).float() * -(math.log(10000.0) / D)
+
+# -------------------------------------------------------------------------------------- #
+#  Sequence transformer (temporal)                                                      #
+# -------------------------------------------------------------------------------------- #
+class SinCosPositionalEncoding(nn.Module):
+    def __init__(self, d_model: int):
+        super().__init__()
+        self.d_model = d_model
+
+    def forward(self, x: Tensor) -> Tensor:           # (B, L, M)
+        B, L, M = x.shape
+        if M != self.d_model:
+            raise ValueError("Mismatch in positional encoding dimension.")
+        pos = torch.arange(L, device=x.device).float().unsqueeze(1)         # (L, 1)
+        div = torch.exp(
+            torch.arange(0, M, 2, device=x.device).float() * -(math.log(10000.0) / M)
         )
-        pe = torch.zeros(L, D, device=device)
-        pe[:, 0::2] = torch.sin(pos * div_term)
-        pe[:, 1::2] = torch.cos(pos * div_term)
-        return x + pe.unsqueeze(0)
+        pe = torch.zeros(L, M, device=x.device)
+        pe[:, 0::2] = torch.sin(pos * div)
+        pe[:, 1::2] = torch.cos(pos * div)
+        return x + pe.unsqueeze(0)                                         # broadcast B
+
 
 class SequenceTransformer(nn.Module):
-    """Inter-row (temporal) Transformer encoder with causal masking"""
-    def __init__(self, d_model: int, n_heads: int, depth: int = 2,
-                 ffn_mult: int = 4, dropout: float = 0.1,
-                 layer_norm_eps: float = 1e-5, norm_first: bool = False):
+    """Causal Transformer encoder over the temporal dimension."""
+
+    def __init__(self, cfg: SequenceTransformerConfig):
         super().__init__()
-        self.pos_encoder = PositionalEncoding()
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=d_model, nhead=n_heads,
-            dim_feedforward=ffn_mult * d_model,
-            dropout=dropout, activation="relu",
-            layer_norm_eps=layer_norm_eps,
-            batch_first=True, norm_first=norm_first
+        self.pos_enc = SinCosPositionalEncoding(cfg.d_model)
+        layer = nn.TransformerEncoderLayer(
+            d_model=cfg.d_model,
+            nhead=cfg.n_heads,
+            dim_feedforward=cfg.ffn_mult * cfg.d_model,
+            dropout=cfg.dropout,
+            activation="relu",
+            layer_norm_eps=cfg.layer_norm_eps,
+            batch_first=True,
+            norm_first=cfg.norm_first,
         )
-        self.transformer = nn.TransformerEncoder(
-            encoder_layer, num_layers=depth
-        )
+        self.encoder = nn.TransformerEncoder(layer, num_layers=cfg.depth)
 
-    def forward(self, x: Tensor, padding_mask: BoolTensor) -> Tensor:
-        # x: (B, L, m)
+    def forward(self, x: Tensor, pad_mask: BoolTensor) -> Tensor:  # (B, L, M)
         B, L, _ = x.shape
-        x = self.pos_encoder(x)
-        causal_mask = nn.Transformer.generate_square_subsequent_mask(
-            L, device=x.device
-        )
-        return self.transformer(
-            x,
-            mask=causal_mask.bool(),
-            src_key_padding_mask=padding_mask.bool()
-        )  # (B, L, m)
+        x = self.pos_enc(x)
+        causal = torch.triu(torch.ones(L, L, device=x.device), 1).bool()
+        return self.encoder(x, mask=causal, src_key_padding_mask=pad_mask)
 
-class LSTMClassifier(nn.Module):
-    """LSTM on top of sequence outputs for classification"""
-    def __init__(self, input_size: int, hidden_size: int,
-                 num_layers: int, num_classes: int, dropout: float = 0.1):
+
+# -------------------------------------------------------------------------------------- #
+#  LSTM head                                                                            #
+# -------------------------------------------------------------------------------------- #
+class LSTMHead(nn.Module):
+    """Sequence-level representation ➟ classification or regression."""
+
+    def __init__(self, cfg: LSTMConfig, input_size: int):
         super().__init__()
         self.lstm = nn.LSTM(
-            input_size=input_size, hidden_size=hidden_size,
-            num_layers=num_layers, batch_first=True,
-            dropout=dropout if num_layers > 1 else 0.0
+            input_size=input_size,
+            hidden_size=cfg.hidden_size,
+            num_layers=cfg.num_layers,
+            batch_first=True,
+            dropout=cfg.dropout if cfg.num_layers > 1 else 0.0,
         )
-        self.fc = nn.Linear(hidden_size, num_classes)
+        self.fc = nn.Linear(cfg.hidden_size, cfg.num_classes)
 
-    def forward(self, x: Tensor, padding_mask: BoolTensor) -> Tensor:
-        # x: (B, L, m)
-        lengths = (~padding_mask).sum(dim=1)
-        packed = pack_padded_sequence(
-            x, lengths.cpu(), batch_first=True, enforce_sorted=False
-        )
+    def forward(self, seq_out: Tensor, pad_mask: BoolTensor) -> Tensor:  # (B, L, M)
+        lengths = (~pad_mask).sum(dim=1).cpu()
+        packed = pack_padded_sequence(seq_out, lengths, batch_first=True, enforce_sorted=False)
         _, (h_n, _) = self.lstm(packed)
-        h_last = h_n[-1]  # (B, hidden_size)
-        return self.fc(h_last)
+        return self.fc(h_n[-1])                                          # (B, C)
 
+
+# -------------------------------------------------------------------------------------- #
+#  Full model                                                                           #
+# -------------------------------------------------------------------------------------- #
 class TransactionModel(nn.Module):
-    """End-to-end tabular sequence model"""
-    def __init__(self, config: ModelConfig):
+    """End-to-end model supporting autoregressive pre-train and fraud classification."""
+
+    def __init__(self, cfg: ModelConfig):
         super().__init__()
-        # dimensions
-        C = len(config.cat_vocab_sizes)
-        F = len(config.cont_features)
-        K = C + F
-        D = config.emb_dim
-        M = config.sequence_transformer.d_model
+        self.cfg = cfg
 
-        # components
+        # ─── Embedding & field transformer ─────────────────────────────────────── #
         self.embedder = EmbeddingLayer(
-            config.cat_vocab_sizes,
-            config.cont_features,
-            emb_dim=D,
-            dropout=config.dropout,
-            padding_idx=config.padding_idx
+            cfg.cat_vocab_sizes,
+            cfg.cont_features,
+            emb_dim=cfg.emb_dim,
+            dropout=cfg.dropout,
+            padding_idx=cfg.padding_idx,
         )
-        ft = config.field_transformer
-        self.field_tfmr = FieldTransformer(
-            d_model=ft.d_model,
-            n_heads=ft.n_heads,
-            depth=ft.depth,
-            ffn_mult=ft.ffn_mult,
-            dropout=ft.dropout,
-            layer_norm_eps=ft.layer_norm_eps,
-            norm_first=ft.norm_first
-        )
-        st = config.sequence_transformer
-        self.seq_tfmr = SequenceTransformer(
-            d_model=st.d_model,
-            n_heads=st.n_heads,
-            depth=st.depth,
-            ffn_mult=st.ffn_mult,
-            dropout=st.dropout,
-            layer_norm_eps=st.layer_norm_eps,
-            norm_first=st.norm_first
-        )
-        # simple row projection: (K*D) -> M
-        self.row_projector = nn.Linear(K * D, M)
-        # LSTM classifier (fraud head)
-        lstm_cfg = config.lstm_config
-        self.fraud_head = LSTMClassifier(
-            input_size=M,
-            hidden_size=lstm_cfg.hidden_size,
-            num_layers=lstm_cfg.num_layers,
-            num_classes=lstm_cfg.num_classes,
-            dropout=lstm_cfg.dropout
-        )
+        self.field_tf = FieldTransformer(cfg.field_transformer)
 
-        hidden_dim = lstm_cfg.hidden_size
-        self.total_cat_size = sum(config.cat_vocab_sizes.values())
-        self.cat_offsets = torch.cumsum(
-            torch.tensor([0] + list(config.cat_vocab_sizes.values())), dim=0
-        )[:-1]
-        self.ar_cat_head = nn.Linear(hidden_dim, self.total_cat_size)
-        self.ar_cont_head = nn.Linear(hidden_dim, len(config.cont_features))
+        # ─── Row projection ─────────────────────────────────────────────────────── #
+        K, D = len(cfg.cat_vocab_sizes) + len(cfg.cont_features), cfg.emb_dim
+        self.row_proj = nn.Linear(K * D, cfg.sequence_transformer.d_model)
 
-    def _encode(self, cat: LongTensor, cont: Tensor, padding_mask: BoolTensor) -> Tensor:
-        B, L, _ = cat.shape
-        emb = self.embedder(cat, cont)          # (B*L, K, D)
-        intra = self.field_tfmr(emb)            # (B*L, K, D)
-        flat = intra.flatten(start_dim=1)       # (B*L, K*D)
-        row_repr = self.row_projector(flat).view(B, L, -1)  # (B, L, M)
-        seq_out = self.seq_tfmr(row_repr, padding_mask)     # (B, L, M)
-        lengths = (~padding_mask).sum(dim=1)
-        packed = pack_padded_sequence(
-            seq_out, lengths.cpu(), batch_first=True, enforce_sorted=False
-        )
-        _, (h_n, _) = self.fraud_head.lstm(packed)
-        return h_n[-1]  # (B, hidden_dim)
+        # ─── Sequence transformer ──────────────────────────────────────────────── #
+        self.seq_tf = SequenceTransformer(cfg.sequence_transformer)
+        
 
-    def forward(self,
-                cat: LongTensor,
-                cont: Tensor,
-                padding_mask: BoolTensor,
-                mode: str = 'fraud'):
-        hidden = self._encode(cat, cont, padding_mask)
-        if mode == 'ar':
-            logits_cat = self.ar_cat_head(hidden)
-            pred_cont = self.ar_cont_head(hidden)
-            return logits_cat, pred_cont
+        # ─── heads ─────────────────────────────────────────────── #
+        if cfg.lstm_config is not None:
+            self.lstm_head = LSTMHead(cfg.lstm_config,
+                                      input_size=cfg.sequence_transformer.d_model)
         else:
-            return self.fraud_head.fc(hidden)
+            self.lstm_head = None     # fraud head skipped
+        total_cat = sum(cfg.cat_vocab_sizes.values())
+        H = (cfg.lstm_config.hidden_size
+             if cfg.lstm_config else cfg.sequence_transformer.d_model)
+        self.ar_cat_head  = nn.Linear(H, total_cat)
+        self.ar_cont_head = nn.Linear(H, len(cfg.cont_features))
+        # pre-compute offsets for categorical slicing
+        self.register_buffer(
+            "cat_offsets",
+            torch.tensor([0] + list(cfg.cat_vocab_sizes.values())).cumsum(0)[:-1],
+            persistent=False,
+        )
+
+    # ╭──────────────────────────────────────────────────────────────────────────╮ #
+    # │                               helpers                                    │ #
+    # ╰──────────────────────────────────────────────────────────────────────────╯ #
+    def _encode(self, cat: LongTensor, cont: Tensor, pad_mask: BoolTensor) -> Tensor:
+        """
+        Returns a sequence representation (B, H) for downstream heads.
+        """
+        B, L, _ = cat.shape
+        field = self.embedder(cat, cont)                    # (B·L, K, D)
+        field = self.field_tf(field).flatten(start_dim=1)   # (B·L, K*D)
+        row_repr = self.row_proj(field).view(B, L, -1)      # (B, L, M)
+        seq_out = self.seq_tf(row_repr, pad_mask)           # (B, L, M)
+
+        # LSTM summarisation (same as fraud head uses)
+        lengths = (~pad_mask).sum(dim=1).cpu()
+        packed = pack_padded_sequence(seq_out, lengths, batch_first=True, enforce_sorted=False)
+        _, (h_n, _) = self.lstm_head.lstm(packed)
+        return h_n[-1]                                      # (B, H)
+
+    # ╭──────────────────────────────────────────────────────────────────────────╮ #
+    # │                                 API                                      │ #
+    # ╰──────────────────────────────────────────────────────────────────────────╯ #
+    def forward(
+        self,
+        cat: LongTensor,
+        cont: Tensor,
+        pad_mask: BoolTensor,
+        mode: str = "fraud",
+    ):
+        """
+        Parameters
+        ----------
+        mode : {'fraud', 'ar'}
+            * 'fraud' → classification logits (B, 2)
+            * 'ar'    → tuple(logits_cat, pred_cont) for next-step prediction
+        """
+        hidden = self._encode(cat, cont, pad_mask)          # (B, H)
+
+        if mode == "fraud":
+            if self.lstm_head is None:
+                raise RuntimeError("Model was built in pre-train-only mode.")
+            return self.lstm_head.fc(hidden)
+        elif mode == "ar":
+            return self.ar_cat_head(hidden), self.ar_cont_head(hidden)

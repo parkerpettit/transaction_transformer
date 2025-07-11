@@ -1,79 +1,79 @@
 import logging
 import torch
 import torch.nn as nn
-from txn_model.config import (
+from config import (
     ModelConfig,
     FieldTransformerConfig,
     SequenceTransformerConfig,
     LSTMConfig,
 )
-from txn_model.model import TransactionModel
+from model import TransactionModel
 
-logger = logging.getLogger(__name__)
+from data.dataset import slice_batch
 
+from typing import Dict, List, Tuple
+import torch
+import torch.nn as nn
 
-def evaluate_binary(
-    model: torch.nn.Module,
+@torch.no_grad()
+def evaluate(
+    model: nn.Module,
     loader: torch.utils.data.DataLoader,
-    criterion: torch.nn.Module,
+    cat_features: List[str],          # names in the same order you sliced tgt_cat
+    vocab_sizes: Dict[str, int],   # {feature_name: vocab_len}
+    crit_cat: nn.Module,           # e.g. nn.CrossEntropyLoss()
+    crit_cont: nn.Module,          # e.g. nn.MSELoss()
     device: torch.device,
-) -> tuple[float, float, dict[int, float]]:
-    """Run a full pass over ``loader`` and compute loss and per-class accuracy."""
+) -> Tuple[float, Dict[str, float]]:
+    """
+    Validate once over `loader`.
+
+    Returns
+    -------
+    avg_loss : float
+        Mean loss (categorical + continuous) over all samples.
+    feat_acc : dict[str, float]
+        Accuracy per categorical feature (0–1 range).
+    """
     model.eval()
-    total_loss = 0.0
-    total_correct = 0
-    total_samples = 0
-    class_correct: dict[int, int] = {}
-    class_total: dict[int, int] = {}
 
-    with torch.no_grad():
-        for batch_idx, batch in enumerate(loader, 1):
-            logger.debug("Processing eval batch %d", batch_idx)
-            inp_cat = batch["cat"][:, :-1].to(device)
-            inp_cont = batch["cont"][:, :-1].to(device)
-            pad_mask = batch["pad_mask"][:, :-1].to(device).bool()
-            labels = batch["label"].to(device)
+    total_loss, total_samples = 0.0, 0
+    feat_correct = [0] * len(cat_features)
+    feat_total   = [0] * len(cat_features)
 
-            logits = model(inp_cat, inp_cont, padding_mask=pad_mask)
+    sizes = [vocab_sizes[f] for f in cat_features]   # lens in the same order
+    for batch in loader:
+        # slice_batch = the helper you already have
+        inp_cat, inp_cont, inp_mask, tgt_cat, tgt_cont = slice_batch(batch)
+        inp_cat, inp_cont = inp_cat.to(device), inp_cont.to(device)
+        inp_mask          = inp_mask.to(device).bool()
+        tgt_cat, tgt_cont = tgt_cat.to(device), tgt_cont.to(device)
 
-            if isinstance(criterion, nn.BCEWithLogitsLoss):
-                logits = logits.view(-1)
-                labels_f = labels.float()
-                loss = criterion(logits, labels_f)
-                preds = (torch.sigmoid(logits) > 0.5).long()
-            else:
-                loss = criterion(logits, labels)
-                preds = logits.argmax(dim=1)
+        logits_cat, pred_cont = model(inp_cat, inp_cont, inp_mask, mode="ar")
 
-            batch_size = labels.size(0)
-            total_loss += loss.item() * batch_size
-            matches = preds == labels
-            total_correct += matches.sum().item()
-            total_samples += batch_size
-            for cls in labels.unique().tolist():
-                mask = labels == cls
-                if cls not in class_correct:
-                    class_correct[cls] = 0
-                    class_total[cls] = 0
-                class_correct[cls] += (preds[mask] == labels[mask]).sum().item()
-                class_total[cls] += mask.sum().item()
+        # ----- compute loss & per-feature accuracy -----
+        start, loss_cat = 0, 0.0
+        for i, V in enumerate(sizes):
+            end        = start + V
+            logits_f   = logits_cat[:, start:end]        # [B, V_i]
+            targets_f  = tgt_cat[:, i]                   # [B]
+            loss_cat  += crit_cat(logits_f, targets_f)
 
-            logger.debug(
-                "Eval batch %d/%d | loss %.4f", batch_idx, len(loader), loss.item()
-            )
+            preds_f     = logits_f.argmax(dim=1)
+            feat_correct[i] += (preds_f == targets_f).sum().item()
+            feat_total[i]   += targets_f.numel()
+            start = end
+
+        loss = loss_cat + crit_cont(pred_cont, tgt_cont)
+        bs   = inp_cat.size(0)
+        total_loss    += loss.item() * bs
+        total_samples += bs
 
     avg_loss = total_loss / total_samples
-    accuracy = total_correct / total_samples
-    class_acc = {
-        cls: (class_correct[cls] / class_total[cls]) if class_total[cls] > 0 else 0.0
-        for cls in class_total
+    feat_acc = {
+        name: (feat_correct[i] / feat_total[i]) if feat_total[i] else 0.0
+        for i, name in enumerate(cat_features)
     }
 
-
-    print(f"[Evaluate] Avg loss {avg_loss:.4f}, accuracy {accuracy:.2%}")
-    for cls, acc in class_acc.items():
-        print(f"[Evaluate] Class {cls} accuracy {acc:.2%}")
-
-
-    model.train()
-    return avg_loss, accuracy, class_acc
+    model.train()           # restore training mode
+    return avg_loss, feat_acc

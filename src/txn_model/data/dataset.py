@@ -15,14 +15,14 @@ class TxnDataset(Dataset):
         self,
         df: pd.DataFrame,
         group_by: str,
-        cat_feats: List[str],
-        cont_feats: List[str],
+        cat_features: List[str],
+        cont_features: List[str],
         window_size: int,
         stride: int,
     ):
         # Extract lean NumPy arrays
-        self.cat_arr  = np.ascontiguousarray(df[cat_feats].values, dtype=np.int32)
-        self.cont_arr = np.ascontiguousarray(df[cont_feats].values, dtype=np.float32)
+        self.cat_arr  = np.ascontiguousarray(df[cat_features].values, dtype=np.int32)
+        self.cont_arr = np.ascontiguousarray(df[cont_features].values, dtype=np.float32)
         self.labels   = np.ascontiguousarray(df["is_fraud"].values, dtype=np.int8)
         self.window_size = window_size
         self.stride      = stride
@@ -73,3 +73,11 @@ def collate_fn(batch: List[Dict[str, torch.Tensor]], pad_id: int = 0) -> Dict[st
     labels = torch.stack([b["label"] for b in batch], dim=0)
 
     return {"cat": cats, "cont": conts, "pad_mask": pad_mask, "label": labels}
+
+
+def slice_batch(batch):
+    cat, cont, pad = batch["cat"], batch["cont"], batch["pad_mask"]
+    return (
+        cat[:, :-1], cont[:, :-1], pad[:, :-1],      # inputs
+        cat[:, -1],  cont[:, -1],                   # targets
+    )

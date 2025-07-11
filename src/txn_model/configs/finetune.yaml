@@ -1,0 +1,22 @@
+data_dir:    data
+window:      20
+
+cat_features: ['User', 'Card', 'Use Chip',
+       'Merchant Name', 'Merchant City', 'Merchant State', 'Zip', 'MCC',
+       'Errors?', 'Year','Month','Day','Hour']
+
+cont_features: ["Amount"]
+
+epochs:      5
+batch_size:  32
+lr:          1e-4
+unfreeze:    false                 # true → train encoder too
+
+emb_dim:     48
+dropout:     0.10
+field_tf:    {d_model: 48,  n_heads: 4, depth: 1}
+sequence_tf: {d_model: 256, n_heads: 4, depth: 4}
+lstm:
+  hidden:    256
+  layers:    2
+  dropout:   0.10
