@@ -8,7 +8,7 @@ cat_features: ['User', 'Card', 'Use Chip',
 cont_features: ["Amount"]
 # training
 epochs:      10
-batch_size:  512
+batch_size:  1024
 lr:          5.0e-4
 
 # model
