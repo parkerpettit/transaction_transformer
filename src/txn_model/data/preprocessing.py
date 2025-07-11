@@ -4,9 +4,11 @@ from typing import List, Dict, Tuple
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
+import torch
+from torch.utils.data import Dataset
+import torch.nn.functional as F
 
 logger = logging.getLogger(__name__)
-
 
 def preprocess(
     file: str,
@@ -17,48 +19,64 @@ def preprocess(
     train_frac: float = 0.70,
     val_frac: float = 0.15,
     seed: int = 42,
-) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, Dict[str, Dict[str, np.ndarray]], List[str], List[str], StandardScaler]:
-    """Vectorized preprocessing for the transaction dataset."""
-    logger.info("Loading raw data from %s", file)
-    df = pd.read_feather(file)
-    logger.debug("Raw data shape: %s", df.shape)
+) -> Tuple[
+    pd.DataFrame,
+    pd.DataFrame,
+    pd.DataFrame,
+    Dict[str, Dict[str, np.ndarray]],
+    List[str],
+    List[str],
+    StandardScaler,
+]:
+    """Efficient vectorized preprocessing for transaction data."""
+    # 1) Read only needed columns
+    usecols = [*cat_features, *cont_features, group_key, time_col, "Is Fraud?", "Year", "Month", "Day"]
+    df = pd.read_feather(file, columns=usecols)
 
-    logger.info("Generating binary fraud flag")
-    df["is_fraud"] = df["Is Fraud?"].str.lower().map({"yes": 1, "no": 0})
+    # 2) Generate binary fraud flag
+    df["is_fraud"] = df["Is Fraud?"].str.lower().map({"yes": 1, "no": 0}).astype(np.int8)
+    df.drop(columns=["Is Fraud?"], inplace=True)
 
-    logger.info("Parsing time column %s", time_col)
+    # 3) Parse time, extract hour, drop minutes
     df[time_col] = pd.to_datetime(df[time_col], format="%H:%M", errors="coerce")
     df["Hour"] = df[time_col].dt.hour.astype("category")
-    df.drop(columns=[time_col, "Is Fraud?"], inplace=True)
+    df.drop(columns=[time_col], inplace=True)
 
-    logger.info("Converting continuous features")
+    # 4) Downcast continuous features
     for c in cont_features:
         if df[c].dtype == object:
-            df[c] = pd.to_numeric(df[c].astype(str).str.replace(r"[\$,]", "", regex=True), errors="coerce")
+            df[c] = (
+                df[c]
+                .str.replace(r"[\$,]", "", regex=True)
+                .astype("float32")
+            )
+        else:
+            df[c] = pd.to_numeric(df[c], downcast="float")
 
-    logger.info("Splitting dataset by %s", group_key)
+    # 5) Sort chronologically
+    df.sort_values(by=["Year", "Month", "Day", "Hour"], ascending=True, inplace=True, ignore_index=True)
+
+    # 6) Create train/val/test splits ensuring chronological grouping
     df["rank"] = df.groupby(group_key).cumcount()
     df["n_txns"] = df.groupby(group_key)["rank"].transform("max") + 1
     df["split"] = np.where(
-        df["rank"] < df["n_txns"] * train_frac,
-        "train",
-        np.where(df["rank"] < df["n_txns"] * (train_frac + val_frac), "val", "test"),
+        df["rank"] < df["n_txns"] * train_frac, "train",
+        np.where(df["rank"] < df["n_txns"] * (train_frac + val_frac), "val", "test")
     )
 
-    logger.info("Creating train/val/test subsets")
-    cat_feats = list(cat_features) + ["Hour"]
-    cont_feats = list(cont_features)
+    # 7) Subset and drop intermediates
     drop_cols = ["rank", "n_txns", "split"]
-
     def subset(name: str) -> pd.DataFrame:
-        subset_df = df[df["split"] == name].copy()
-        return subset_df.drop(columns=drop_cols).reset_index(drop=True)
+        d = df[df["split"] == name].copy()
+        return d.drop(columns=drop_cols).reset_index(drop=True)
 
     train_df = subset("train")
-    val_df = subset("val")
-    test_df = subset("test")
+    val_df   = subset("val")
+    test_df  = subset("test")
+    del df  # free RAM
 
-    logger.info("Encoding categorical features")
+    # 8) Encode categoricals
+    cat_feats = list(cat_features) + ["Hour"]
     encoders: Dict[str, Dict[str, np.ndarray]] = {}
     for c in cat_feats:
         train_df[c] = train_df[c].astype("category")
@@ -67,22 +85,14 @@ def preprocess(
         inv_array = np.array(["__PAD__", "__UNK__"] + list(cats), dtype=object)
         encoders[c] = {"map": mapping, "inv": inv_array}
         for split_df in (train_df, val_df, test_df):
-            split_df[c] = split_df[c].astype("object")
-            codes = split_df[c].map(mapping).fillna(1).astype(int)
-            split_df[c] = codes
+            split_df[c] = split_df[c].map(mapping).fillna(1).astype(np.int32)
 
-    logger.info("Fitting StandardScaler on continuous features")
+    # 9) Scale continuous and downcast
+    cont_feats = list(cont_features)
     scaler = StandardScaler().fit(train_df[cont_feats].to_numpy())
-    train_df[cont_feats] = scaler.transform(train_df[cont_feats])
-    val_df[cont_feats] = scaler.transform(val_df[cont_feats])
-    test_df[cont_feats] = scaler.transform(test_df[cont_feats])
-
-    logger.info(
-        "Finished preprocessing -> train %d rows, val %d rows, test %d rows",
-        len(train_df),
-        len(val_df),
-        len(test_df),
-    )
+    for df_ in (train_df, val_df, test_df):
+        arr = scaler.transform(df_[cont_feats])
+        df_[cont_feats] = arr.astype(np.float32)
 
     return train_df, val_df, test_df, encoders, cat_feats, cont_feats, scaler
 
