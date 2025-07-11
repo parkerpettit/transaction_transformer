@@ -20,7 +20,7 @@ import yaml
 from utils import load_cfg, merge
 import time
 from tqdm.auto import tqdm  
-
+from utils import save_ckpt
 
 # --- 1. include --config flag -----------
 ap = argparse.ArgumentParser()
@@ -105,6 +105,7 @@ bar_fmt = (
 )
 
 # ─── Training loop ─────────────────────────────────────────────────────────
+best_val = float("inf")
 for ep in range(args.epochs):
     prog_bar = tqdm(
         train_loader,
@@ -124,19 +125,25 @@ for ep in range(args.epochs):
         cat_logits, cont_pred = model(cat_input, cont_inp, pad_mask.bool(), mode="ar")
 
         # categorical losses field-wise
-        start = 0; loss_cat = 0
+        start = 0
+        loss_cat = 0
         for i, vocab_len in enumerate(vocab_sizes):
             loss_cat += crit_cat(cat_logits[:, start:start+vocab_len], cat_tgt[:, i])
             start += vocab_len
         loss_cont = crit_cont(cont_pred, cont_tgt)
+        loss_cat /= len(vocab_sizes)
         loss = loss_cat + loss_cont
 
-        optim.zero_grad(); loss.backward(); optim.step()
-        batch_size = cat_input.size(0); tot_loss += loss.item() * batch_size; epoch_sample_count += batch_size
+        optim.zero_grad()
+        loss.backward()
+        optim.step()
+        batch_size = cat_input.size(0)
+        tot_loss += loss.item() * batch_size
+        epoch_sample_count += batch_size
 
         prog_bar.set_postfix({
             "tot":  f"{loss.item():.4f}",
-            "cat":  f"{loss_cat.item():.4f}",
+            "cat":  f"{loss_cat.item():.4f}", # type: ignore
             "cont": f"{loss_cont.item():.4f}",
         })
     train_loss = tot_loss / epoch_sample_count
@@ -152,6 +159,19 @@ for ep in range(args.epochs):
     print(f"Epoch {ep+1:02}/{args.epochs} "
           f"| train {train_loss:.4f}  val {val_loss:.4f} "
           f"| Δt {time.perf_counter()-t0:.1f}s")
+    if val_loss < best_val - 1e-5:   
+        print("New validation loss better than previous. Saving checkpoint.")             
+        best_val = val_loss                       
+        ckpt_path = Path(args.data_dir) / "pretrained_backbone.pt"
+        save_ckpt(                               
+            model, optim, ep, best_val,
+            ckpt_path, cat_features, cont_features, cfg
+        )
+        wandb.run.summary["best_val_loss"] = best_val # type: ignore
+        print(f"New best ({best_val:.4f}) – checkpoint saved.")
+
+    
+
     
 ckpt_path = Path(args.data_dir) / "pretrained_backbone.pt"
 torch.save(model.state_dict(), ckpt_path)
