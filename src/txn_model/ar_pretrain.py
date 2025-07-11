@@ -8,7 +8,12 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 
 from data.dataset import TxnDataset, collate_fn
-from config import ModelConfig, FieldTransformerConfig, SequenceTransformerConfig, LSTMConfig
+from config import (
+    ModelConfig,
+    FieldTransformerConfig,
+    SequenceTransformerConfig,
+    LSTMConfig,
+)
 from model import TransactionModel
 from data.preprocessing import preprocess
 from logging_utils import configure_logging
@@ -31,9 +36,27 @@ def slice_batch(batch):
 def build_config(cat_vocab_sizes, cont_features):
     EMB_DIM = 48
     ROW_DIM = 256
-    field_cfg = FieldTransformerConfig(d_model=EMB_DIM, n_heads=4, depth=1, ffn_mult=2, dropout=0.10, layer_norm_eps=1e-6, norm_first=True)
-    seq_cfg = SequenceTransformerConfig(d_model=ROW_DIM, n_heads=4, depth=4, ffn_mult=2, dropout=0.10, layer_norm_eps=1e-6, norm_first=True)
-    lstm_cfg = LSTMConfig(hidden_size=ROW_DIM, num_layers=2, num_classes=2, dropout=0.10)
+    field_cfg = FieldTransformerConfig(
+        d_model=EMB_DIM,
+        n_heads=4,
+        depth=1,
+        ffn_mult=2,
+        dropout=0.10,
+        layer_norm_eps=1e-6,
+        norm_first=True,
+    )
+    seq_cfg = SequenceTransformerConfig(
+        d_model=ROW_DIM,
+        n_heads=4,
+        depth=4,
+        ffn_mult=2,
+        dropout=0.10,
+        layer_norm_eps=1e-6,
+        norm_first=True,
+    )
+    lstm_cfg = LSTMConfig(
+        hidden_size=ROW_DIM, num_layers=2, num_classes=2, dropout=0.10
+    )
 
     return ModelConfig(
         cat_vocab_sizes=cat_vocab_sizes,
@@ -51,28 +74,41 @@ def build_config(cat_vocab_sizes, cont_features):
 def generate_synthetic():
     import pandas as pd
     import numpy as np
+
     rows = 40
-    df = pd.DataFrame({
-        "User": np.repeat(np.arange(4), 10),
-        "Card": np.random.randint(0, 3, rows),
-        "Use Chip": np.random.randint(0, 2, rows),
-        "Merchant Name": np.random.randint(0, 4, rows),
-        "Merchant City": np.random.randint(0, 3, rows),
-        "Merchant State": np.random.randint(0, 3, rows),
-        "Zip": np.random.randint(0, 5, rows),
-        "MCC": np.random.randint(0, 3, rows),
-        "Errors?": np.random.randint(0, 2, rows),
-        "Year": np.random.randint(0, 2, rows),
-        "Month": np.random.randint(0, 12, rows),
-        "Day": np.random.randint(0, 28, rows),
-        "Hour": np.random.randint(0, 24, rows),
-        "Amount": np.random.randn(rows),
-        "is_fraud": np.random.randint(0, 2, rows),
-    })
+    df = pd.DataFrame(
+        {
+            "User": np.repeat(np.arange(4), 10),
+            "Card": np.random.randint(0, 3, rows),
+            "Use Chip": np.random.randint(0, 2, rows),
+            "Merchant Name": np.random.randint(0, 4, rows),
+            "Merchant City": np.random.randint(0, 3, rows),
+            "Merchant State": np.random.randint(0, 3, rows),
+            "Zip": np.random.randint(0, 5, rows),
+            "MCC": np.random.randint(0, 3, rows),
+            "Errors?": np.random.randint(0, 2, rows),
+            "Year": np.random.randint(0, 2, rows),
+            "Month": np.random.randint(0, 12, rows),
+            "Day": np.random.randint(0, 28, rows),
+            "Hour": np.random.randint(0, 24, rows),
+            "Amount": np.random.randn(rows),
+            "is_fraud": np.random.randint(0, 2, rows),
+        }
+    )
     cat_feats = [
-        "User", "Card", "Use Chip", "Merchant Name", "Merchant City",
-        "Merchant State", "Zip", "MCC", "Errors?", "Year", "Month",
-        "Day", "Hour",
+        "User",
+        "Card",
+        "Use Chip",
+        "Merchant Name",
+        "Merchant City",
+        "Merchant State",
+        "Zip",
+        "MCC",
+        "Errors?",
+        "Year",
+        "Month",
+        "Day",
+        "Hour",
     ]
     cont_feats = ["Amount"]
     encoders = {c: {"inv": [0, 1, 2, 3, 4]} for c in cat_feats}
@@ -88,7 +124,9 @@ def main(args):
     else:
         if not os.path.exists(args.cache):
             raise FileNotFoundError(args.cache)
-        train_df, _, _, encoders, cat_feats, cont_feats, _ = torch.load(args.cache, weights_only=False)
+        train_df, _, _, encoders, cat_feats, cont_feats, _ = torch.load(
+            args.cache, weights_only=False
+        )
 
     cat_sizes = {c: len(encoders[c]["inv"]) for c in cat_feats}
     config = build_config(cat_sizes, cont_feats)
@@ -102,7 +140,9 @@ def main(args):
         window_size=args.window,
         stride=args.window,
     )
-    loader = DataLoader(ds, batch_size=args.batch_size, shuffle=True, collate_fn=collate_fn)
+    loader = DataLoader(
+        ds, batch_size=args.batch_size, shuffle=True, collate_fn=collate_fn
+    )
 
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     crit_cat = nn.CrossEntropyLoss()
@@ -130,19 +170,54 @@ def main(args):
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+
+        # ---- evaluation ----
+        model.eval()
+        val_loss = 0.0
+        val_samples = 0
+        with torch.no_grad():
+            for batch in loader:
+                inp_cat, inp_cont, inp_mask, tgt_cat, tgt_cont = slice_batch(batch)
+                inp_cat = inp_cat.to(device)
+                inp_cont = inp_cont.to(device)
+                inp_mask = inp_mask.to(device)
+                tgt_cat = tgt_cat.to(device)
+                tgt_cont = tgt_cont.to(device)
+                logits_cat, pred_cont = model(
+                    inp_cat, inp_cont, inp_mask.bool(), mode="ar"
+                )
+                start = 0
+                loss_cat = 0.0
+                for i, V in enumerate(sizes):
+                    end = start + V
+                    loss_cat += crit_cat(logits_cat[:, start:end], tgt_cat[:, i])
+                    start = end
+                loss_b = loss_cat + crit_cont(pred_cont, tgt_cont)
+                batch_size = inp_cat.size(0)
+                val_loss += loss_b.item() * batch_size
+                val_samples += batch_size
+        val_loss /= val_samples
+        model.train()
         torch.save(model.state_dict(), "pretrained_backbone.pt")
         logger.info(
-            "Epoch %d/%d loss %.4f (%.2fs)",
+            "Epoch %d/%d loss %.4f val_loss %.4f (%.2fs)",
             ep + 1,
             args.epochs,
             loss.item(),
+            val_loss,
             time.perf_counter() - ep_start,
+        )
+        print(
+            f"[AR Pretrain] Epoch {ep + 1} loss {loss.item():.4f} val_loss {val_loss:.4f}"
         )
 
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
-    p.add_argument("--cache", default="/content/drive/MyDrive/summer_urop_25/datasets/processed_data.pt")
+    p.add_argument(
+        "--cache",
+        default="/content/drive/MyDrive/summer_urop_25/datasets/processed_data.pt",
+    )
     p.add_argument("--epochs", type=int, default=1)
     p.add_argument("--batch_size", type=int, default=16)
     p.add_argument("--lr", type=float, default=1e-4)
@@ -150,5 +225,3 @@ if __name__ == "__main__":
     p.add_argument("--synthetic", action="store_true")
     args = p.parse_args()
     main(args)
-
-

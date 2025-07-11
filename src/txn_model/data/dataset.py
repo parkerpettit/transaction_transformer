@@ -28,7 +28,6 @@ class TxnDataset(Dataset):
         self.samples: List[Dict[str, torch.Tensor]] = []
         for key, group in df.groupby(group_by, sort=False):
             logger.debug("Processing group %s with %d rows", key, len(group))
-            print(f"[Dataset] Building samples for group {key} with {len(group)} rows")
             cat_tensor = torch.tensor(group[cat_features].values, dtype=torch.long)
             cont_tensor = torch.tensor(group[cont_features].values, dtype=torch.float)
             label_tensor = torch.tensor(group["is_fraud"].values, dtype=torch.long)
@@ -49,7 +48,6 @@ class TxnDataset(Dataset):
 
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
         logger.debug("Fetching sample %d", idx)
-        print(f"[Dataset] __getitem__ index {idx}")
         return self.samples[idx]
 
 
@@ -57,7 +55,6 @@ def collate_fn(batch: List[Dict[str, torch.Tensor]], pad_id: int = 0) -> Dict[st
     """Pad variable length sequences in batch."""
     max_len = max(item["cat"].shape[0] for item in batch)
     logger.debug("collate_fn called with batch size %d", len(batch))
-    print(f"[Dataset] Collating batch of size {len(batch)}")
 
     def _pad(seq: torch.Tensor, value: float) -> torch.Tensor:
         pad_len = max_len - seq.shape[0]
@@ -72,6 +69,5 @@ def collate_fn(batch: List[Dict[str, torch.Tensor]], pad_id: int = 0) -> Dict[st
     logger.debug(
         "Collated batch with max_len=%d -> cat %s cont %s", max_len, tuple(cat.shape), tuple(cont.shape)
     )
-    print(f"[Dataset] Collated batch -> cat {tuple(cat.shape)} cont {tuple(cont.shape)}")
     return {"cat": cat, "cont": cont, "pad_mask": pad_mask, "label": labels}
 
