@@ -63,8 +63,10 @@ def evaluate(
             feat_correct[i] += (preds_f == targets_f).sum().item()
             feat_total[i]   += targets_f.numel()
             start = end
-
-        loss = loss_cat + crit_cont(pred_cont, tgt_cont)
+        loss_cat /= len(vocab_sizes)
+        loss_cont = crit_cont(pred_cont, tgt_cont)
+        loss = loss_cat + loss_cont 
+        
         batch_size   = inp_cat.size(0)
         total_loss    += loss.item() * batch_size
         total_samples += batch_size
