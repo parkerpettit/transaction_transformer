@@ -1,10 +1,12 @@
 import os
 import time
 import torch
+import logging
 from datetime import datetime
 
 def save_checkpoint(model, optimizer, epoch, best_val, path, cat_features, cont_features, config):
-    print(f"[Utils] Saving checkpoint to {path} at epoch {epoch}")
+    logger = logging.getLogger(__name__)
+    logger.info("Saving checkpoint to %s at epoch %d", path, epoch)
     torch.save({
         "epoch":       epoch,
         "best_val":    best_val,
@@ -21,7 +23,7 @@ def save_checkpoint(model, optimizer, epoch, best_val, path, cat_features, cont_
 
     mod_time = time.ctime(os.path.getmtime(path))
     size_mb  = os.path.getsize(path) / 1_048_576
-    print(f"Checkpoint for epoch {epoch} written ({size_mb:.1f} MB, {mod_time})")
+    logger.info("Checkpoint for epoch %d written (%.1f MB, %s)", epoch, size_mb, mod_time)
 
 
 def load_or_initialize_checkpoint(
@@ -48,7 +50,8 @@ def load_or_initialize_checkpoint(
         best_val: Best validation loss (infinite if starting fresh).
         start_epoch: Epoch number to start training from (1-based).
     """
-    print(f"[Utils] Loading checkpoint from {base_path}")
+    logger = logging.getLogger(__name__)
+    logger.info("Loading checkpoint from %s", base_path)
     if os.path.exists(base_path):
         ckpt = torch.load(base_path, map_location=device, weights_only=False)
         old_cat = ckpt.get("cat_features", [])
@@ -58,22 +61,18 @@ def load_or_initialize_checkpoint(
 
         if mismatch_cat or mismatch_cont:
             # Report mismatches
-            print("Feature mismatch detected in checkpoint:")
+            logger.warning("Feature mismatch detected in checkpoint:")
             if mismatch_cat:
-                print("   Categorical features differ:")
-                print(f"      saved: {old_cat}")
-                print(f"      now:   {cat_features}")
+                logger.warning("   Categorical features differ: saved=%s now=%s", old_cat, cat_features)
             if mismatch_cont:
-                print("   Continuous features differ:")
-                print(f"      saved: {old_cont}")
-                print(f"      now:   {cont_features}")
+                logger.warning("   Continuous features differ: saved=%s now=%s", old_cont, cont_features)
 
             # Rename old checkpoint
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             feat_sig = f"C{len(old_cat)}_Ct{len(old_cont)}"
             new_name = f"txn_old_{feat_sig}_{timestamp}.pt"
             os.rename(base_path, new_name)
-            print(f"Renamed old checkpoint to: {new_name}\n")
+            logger.info("Renamed old checkpoint to: %s", new_name)
 
             best_val = float("inf")
             start_epoch = 0
@@ -87,7 +86,7 @@ def load_or_initialize_checkpoint(
         best_val = float("inf")
         start_epoch = 0
 
-    print(f"[Utils] Checkpoint load result: best_val={best_val}, start_epoch={start_epoch}")
+    logger.info("Checkpoint load result: best_val=%.4f, start_epoch=%d", best_val, start_epoch)
     return best_val, start_epoch
 
 import torch
@@ -106,13 +105,14 @@ def extract_latents_per_card(df_split, model, cat_cols, cont_cols, device):
     Returns:
       X (N×D) latent matrix and y (N,) label vector
     """
-    print("[Utils] Extracting latents per card")
+    logger = logging.getLogger(__name__)
+    logger.info("Extracting latents per card")
     model.eval()
     X_parts, y_parts = [], []
 
     with torch.no_grad():
         for cc, g in df_split.groupby("cc_num", sort=False):
-            print(f"[Utils] Processing card {cc} with {len(g)} rows")
+            logger.debug("Processing card %s with %d rows", cc, len(g))
             # Build tensors of shape (1, L, C) and (1, L, F)
             L = len(g)
             cat_tensor  = torch.tensor(
@@ -152,7 +152,7 @@ def extract_latents_per_card(df_split, model, cat_cols, cont_cols, device):
     # Concatenate all cards
     X = np.vstack(X_parts)                                     # (ΣL, D)
     y = np.concatenate(y_parts)                                # (ΣL,)
-    print(f"[Utils] Extracted latents shape {X.shape}")
+    logger.info("Extracted latents shape %s", X.shape)
     return X, y
 
 

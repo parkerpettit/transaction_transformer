@@ -19,7 +19,6 @@ from txn_model.data.preprocessing import preprocess
 from txn_model.logging_utils import configure_logging
 
 logger = configure_logging(__name__)
-print("[AR Pretrain] Logger configured")
 
 
 def slice_batch(batch):
@@ -123,7 +122,6 @@ def main(args):
 
     if args.synthetic:
         train_df, encoders, cat_feats, cont_feats = generate_synthetic()
-        print("[AR Pretrain] Using synthetic dataset")
     else:
         if not os.path.exists(args.cache):
             raise FileNotFoundError(args.cache)
@@ -147,7 +145,9 @@ def main(args):
     loader = DataLoader(
         ds, batch_size=args.batch_size, shuffle=True, collate_fn=collate_fn
     )
+
     print("[AR Pretrain] DataLoader created")
+
 
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     crit_cat = nn.CrossEntropyLoss()

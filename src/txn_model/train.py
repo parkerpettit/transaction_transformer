@@ -28,11 +28,9 @@ def train(
 
     model = TransactionModel(config).to(device)
     logger.info("Initialized model with config: %s", config)
-    print("[Train] Model initialized")
 
     if os.path.exists("pretrained_backbone.pt"):
         logger.info("Loading pretrained backbone")
-        print("[Train] Loading pretrained backbone")
         state = torch.load("pretrained_backbone.pt", map_location=device)
         model.load_state_dict(state, strict=False)
         for name, param in model.named_parameters():
@@ -73,7 +71,6 @@ def train(
         for batch_idx, batch in enumerate(train_loader, 1):
             batch_start = time.perf_counter()
             logger.debug("Epoch %d batch %d", epoch + 1, batch_idx)
-            print(f"[Train] Epoch {epoch + 1} Batch {batch_idx}")
             inp_cat = batch["cat"][:, :-1].to(device, non_blocking=True)
             inp_cont = batch["cont"][:, :-1].to(device, non_blocking=True)
             pad_mask = batch["pad_mask"][:, :-1].to(device, non_blocking=True).bool()
@@ -100,9 +97,6 @@ def train(
                     loss.item(),
                     avg_loss,
                     batch_time,
-                )
-                print(
-                    f"[Train] Epoch {epoch + 1} Batch {batch_idx}/{len(train_loader)} loss={loss.item():.4f} avg={avg_loss:.4f}"
                 )
 
         epoch_time = time.perf_counter() - epoch_start

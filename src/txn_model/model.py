@@ -33,7 +33,6 @@ class EmbeddingLayer(nn.Module):
     def forward(self, cat: LongTensor, cont: Tensor) -> Tensor:
         B, L, _ = cat.shape
         D = next(iter(self.cat_embeds.values())).embedding_dim
-        print(f"[Model] EmbeddingLayer.forward B={B} L={L}")
 
         cat_embs = [self.dropout(self.cat_embeds[f](cat[:, :, i]))
                     for i, f in enumerate(self.cat_embeds)]
@@ -65,7 +64,6 @@ class FieldTransformer(nn.Module):
 
     def forward(self, x: Tensor) -> Tensor:
         # x: (B*L, K, D)
-        print(f"[Model] FieldTransformer.forward input {tuple(x.shape)}")
         return self.encoder(x)  # (B*L, K, D)
 
 class PositionalEncoding(nn.Module):
@@ -102,7 +100,6 @@ class SequenceTransformer(nn.Module):
 
     def forward(self, x: Tensor, padding_mask: BoolTensor) -> Tensor:
         # x: (B, L, m)
-        print(f"[Model] SequenceTransformer.forward input {tuple(x.shape)}")
         B, L, _ = x.shape
         x = self.pos_encoder(x)
         causal_mask = nn.Transformer.generate_square_subsequent_mask(
@@ -128,7 +125,6 @@ class LSTMClassifier(nn.Module):
 
     def forward(self, x: Tensor, padding_mask: BoolTensor) -> Tensor:
         # x: (B, L, m)
-        print(f"[Model] LSTMClassifier.forward input {tuple(x.shape)}")
         lengths = (~padding_mask).sum(dim=1)
         packed = pack_padded_sequence(
             x, lengths.cpu(), batch_first=True, enforce_sorted=False
@@ -197,7 +193,6 @@ class TransactionModel(nn.Module):
         self.ar_cont_head = nn.Linear(hidden_dim, len(config.cont_features))
 
     def _encode(self, cat: LongTensor, cont: Tensor, padding_mask: BoolTensor) -> Tensor:
-        print(f"[Model] _encode with cat {tuple(cat.shape)} cont {tuple(cont.shape)}")
         B, L, _ = cat.shape
         emb = self.embedder(cat, cont)          # (B*L, K, D)
         intra = self.field_tfmr(emb)            # (B*L, K, D)
@@ -217,7 +212,6 @@ class TransactionModel(nn.Module):
                 padding_mask: BoolTensor,
                 mode: str = 'fraud'):
         hidden = self._encode(cat, cont, padding_mask)
-        print(f"[Model] forward mode={mode} hidden {tuple(hidden.shape)}")
         if mode == 'ar':
             logits_cat = self.ar_cat_head(hidden)
             pred_cont = self.ar_cont_head(hidden)
