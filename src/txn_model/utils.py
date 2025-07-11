@@ -4,6 +4,7 @@ import torch
 from datetime import datetime
 
 def save_checkpoint(model, optimizer, epoch, best_val, path, cat_features, cont_features, config):
+    print(f"[Utils] Saving checkpoint to {path} at epoch {epoch}")
     torch.save({
         "epoch":       epoch,
         "best_val":    best_val,
@@ -47,6 +48,7 @@ def load_or_initialize_checkpoint(
         best_val: Best validation loss (infinite if starting fresh).
         start_epoch: Epoch number to start training from (1-based).
     """
+    print(f"[Utils] Loading checkpoint from {base_path}")
     if os.path.exists(base_path):
         ckpt = torch.load(base_path, map_location=device, weights_only=False)
         old_cat = ckpt.get("cat_features", [])
@@ -85,6 +87,7 @@ def load_or_initialize_checkpoint(
         best_val = float("inf")
         start_epoch = 0
 
+    print(f"[Utils] Checkpoint load result: best_val={best_val}, start_epoch={start_epoch}")
     return best_val, start_epoch
 
 import torch
@@ -103,11 +106,13 @@ def extract_latents_per_card(df_split, model, cat_cols, cont_cols, device):
     Returns:
       X (N×D) latent matrix and y (N,) label vector
     """
+    print("[Utils] Extracting latents per card")
     model.eval()
     X_parts, y_parts = [], []
 
     with torch.no_grad():
         for cc, g in df_split.groupby("cc_num", sort=False):
+            print(f"[Utils] Processing card {cc} with {len(g)} rows")
             # Build tensors of shape (1, L, C) and (1, L, F)
             L = len(g)
             cat_tensor  = torch.tensor(
@@ -147,6 +152,7 @@ def extract_latents_per_card(df_split, model, cat_cols, cont_cols, device):
     # Concatenate all cards
     X = np.vstack(X_parts)                                     # (ΣL, D)
     y = np.concatenate(y_parts)                                # (ΣL,)
+    print(f"[Utils] Extracted latents shape {X.shape}")
     return X, y
 
 
