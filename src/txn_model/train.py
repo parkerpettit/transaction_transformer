@@ -3,6 +3,8 @@ import time
 import logging
 from datetime import datetime
 
+from path_utils import get_data_dir
+
 import torch
 import torch.nn as nn
 
@@ -42,7 +44,8 @@ def train(
     )
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
 
-    base_path = "/content/drive/MyDrive/summer_urop_25/datasets/txn_checkpoint.pt"
+    data_dir = get_data_dir()
+    base_path = os.path.join(data_dir, "txn_checkpoint.pt")
     best_val, start_epoch = load_or_initialize_checkpoint(
         base_path=base_path,
         device=device,
