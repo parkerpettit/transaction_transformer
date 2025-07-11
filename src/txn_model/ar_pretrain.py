@@ -135,8 +135,8 @@ def main(args):
     ds = TxnDataset(
         df=train_df,
         group_by=cat_feats[0],
-        cat_features=cat_feats,
-        cont_features=cont_feats,
+        cat_feats=cat_feats,
+        cont_feats=cont_feats,
         window_size=args.window,
         stride=args.window,
     )
@@ -145,8 +145,6 @@ def main(args):
         batch_size=args.batch_size,
         shuffle=True,
         collate_fn=collate_fn,
-        num_workers=2,
-        pin_memory=True,
     )
 
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
