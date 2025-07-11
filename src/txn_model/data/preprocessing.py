@@ -21,21 +21,27 @@ def preprocess(
     """Vectorized preprocessing for the transaction dataset."""
     logger.info("Loading raw data from %s", file)
     df = pd.read_feather(file)
+    logger.debug("Raw data shape: %s", df.shape)
+    print(f"[Preprocess] Loaded data with shape {df.shape}")
 
     logger.info("Generating binary fraud flag")
+    print("[Preprocess] Generating fraud flag")
     df["is_fraud"] = df["Is Fraud?"].str.lower().map({"yes": 1, "no": 0})
 
     logger.info("Parsing time column %s", time_col)
+    print(f"[Preprocess] Parsing time column {time_col}")
     df[time_col] = pd.to_datetime(df[time_col], format="%H:%M", errors="coerce")
     df["Hour"] = df[time_col].dt.hour.astype("category")
     df.drop(columns=[time_col, "Is Fraud?"], inplace=True)
 
     logger.info("Converting continuous features")
+    print("[Preprocess] Converting continuous features")
     for c in cont_features:
         if df[c].dtype == object:
             df[c] = pd.to_numeric(df[c].astype(str).str.replace(r"[\$,]", "", regex=True), errors="coerce")
 
     logger.info("Splitting dataset by %s", group_key)
+    print(f"[Preprocess] Splitting dataset by {group_key}")
     df["rank"] = df.groupby(group_key).cumcount()
     df["n_txns"] = df.groupby(group_key)["rank"].transform("max") + 1
     df["split"] = np.where(
@@ -45,6 +51,7 @@ def preprocess(
     )
 
     logger.info("Creating train/val/test subsets")
+    print("[Preprocess] Creating dataset splits")
     cat_feats = list(cat_features) + ["Hour"]
     cont_feats = list(cont_features)
     drop_cols = ["rank", "n_txns", "split"]
@@ -58,6 +65,7 @@ def preprocess(
     test_df = subset("test")
 
     logger.info("Encoding categorical features")
+    print("[Preprocess] Encoding categorical features")
     encoders: Dict[str, Dict[str, np.ndarray]] = {}
     for c in cat_feats:
         train_df[c] = train_df[c].astype("category")
@@ -71,6 +79,7 @@ def preprocess(
             split_df[c] = codes
 
     logger.info("Fitting StandardScaler on continuous features")
+    print("[Preprocess] Fitting StandardScaler")
     scaler = StandardScaler().fit(train_df[cont_feats].to_numpy())
     train_df[cont_feats] = scaler.transform(train_df[cont_feats])
     val_df[cont_feats] = scaler.transform(val_df[cont_feats])
@@ -81,6 +90,9 @@ def preprocess(
         len(train_df),
         len(val_df),
         len(test_df),
+    )
+    print(
+        f"[Preprocess] Completed: train {len(train_df)} rows, val {len(val_df)} rows, test {len(test_df)} rows"
     )
     return train_df, val_df, test_df, encoders, cat_feats, cont_feats, scaler
 
