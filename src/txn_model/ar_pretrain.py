@@ -17,6 +17,7 @@ from config import (
 from model import TransactionModel
 from data.preprocessing import preprocess
 from logging_utils import configure_logging
+from path_utils import get_data_dir
 
 logger = configure_logging(__name__)
 
@@ -233,9 +234,10 @@ def main(args):
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
+    default_cache = os.path.join(get_data_dir(), "processed_data.pt")
     p.add_argument(
         "--cache",
-        default="/content/drive/MyDrive/summer_urop_25/datasets/processed_data.pt",
+        default=default_cache,
     )
     p.add_argument("--epochs", type=int, default=1)
     p.add_argument("--batch_size", type=int, default=16)

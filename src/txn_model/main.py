@@ -5,16 +5,23 @@ from datetime import datetime
 from torch.utils.data import DataLoader
 
 from data.dataset import TxnDataset, collate_fn
-from config import ModelConfig, FieldTransformerConfig, SequenceTransformerConfig, LSTMConfig
+from config import (
+    ModelConfig,
+    FieldTransformerConfig,
+    SequenceTransformerConfig,
+    LSTMConfig,
+)
 from data.preprocessing import preprocess
 from train import train
 from logging_utils import configure_logging
+from path_utils import get_data_dir
 
 logger = configure_logging(__name__)
 
 
-PD_CACHE = "/content/drive/MyDrive/summer_urop_25/datasets/processed_data.pt"
-DATASET_PATH = "/content/drive/MyDrive/summer_urop_25/datasets/tabformer.feather"
+DATA_DIR = get_data_dir()
+PD_CACHE = os.path.join(DATA_DIR, "processed_data.pt")
+DATASET_PATH = os.path.join(DATA_DIR, "tabformer.feather")
 
 cat_features = [
     "User", "Card", "Use Chip", "Merchant Name", "Merchant City",
