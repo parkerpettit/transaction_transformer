@@ -128,14 +128,14 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 cache = Path(args.data_dir) / "processed_data.pt"
 if cache.exists():
     print("Processed data exists, loading now.")
-    train_df, val_df, enc, cat_features, cont_features = torch.load(cache,  weights_only=False)
+    train_df, val_df, test_df, enc, cat_features, cont_features, scaler = torch.load(cache,  weights_only=False)
     print("Processed data loaded.")
 else:
     print("Preprocessed data not found. Processing now.")
     raw = Path(args.data_dir) / "card_transaction.v1.csv"
     train_df, val_df, test_df, enc, cat_features, cont_features, scaler = preprocess(raw, args.cat_features, args.cont_features)
     print("Finished processing data. Now saving.")
-    torch.save((train_df, val_df, test_df, enc, cat_features, cont_features), cache)
+    torch.save((train_df, val_df, test_df, enc, cat_features, cont_features, scaler), cache)
     print("Processed data saved.")
 print("Creating training loader")
 train_loader = DataLoader(
@@ -234,7 +234,7 @@ try:
             unit="batch",
             total=len(train_loader),
             bar_format=bar_fmt,
-            ncols=240,               # wider for readability 
+            ncols=200,               # wider for readability 
             leave=False,             # clear at epoch end
         )
         
@@ -303,6 +303,7 @@ try:
             print(f"New best ({best_val:.4f}), checkpoint saved.")
         else:
             if ep_without_improvement >= patience:
+                print(f"No improvement for {patience} epochs. Stopping early.")
                 break
             else:
                 ep_without_improvement += 1
@@ -329,7 +330,7 @@ try:
                 
 except RuntimeError as e:
         # graceful handling of CUDA OOM
-        if "CUDA out of memory" in str(e):
+        if "out of memory" in str(e).lower():
             run.alert(
                 title="CUDA OOM",
                 text=f"Run crashed at batch={args.batch_size}.  Marking failed.")
@@ -342,7 +343,6 @@ except RuntimeError as e:
 
 finally:
         ckpt_path = Path(args.data_dir) / "pretrained_backbone.pt"
-        # torch.save(model.state_dict(), ckpt_path)
         if wandb.run is not None:
             artifact = wandb.Artifact("backbone", type="model")
             artifact.add_file(str(ckpt_path))

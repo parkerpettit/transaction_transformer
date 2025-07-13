@@ -349,7 +349,8 @@ class TransactionModel(nn.Module):
         # ── Optional LSTM fraud head ───────────────────────────────────────
         if self.cfg.lstm_config is not None:
             self.lstm_head = LSTMHead(self.cfg.lstm_config, input_size=cfg.seq_config.d_model)
-
+        else:
+            self.lstm_head = None
         # ── Autoregressive heads (always present) ──────────────────────────
         
         self.ar_dropout   = nn.Dropout(cfg.clf_dropout)
@@ -382,7 +383,7 @@ class TransactionModel(nn.Module):
         if mode == "fraud":
             if self.lstm_head is None:
                 raise RuntimeError("Fraud head not present (pre-train config).")
-            return self.lstm_head(seq, lengths)   # (B, 2)
+            return self.lstm_head(seq, lengths)   # (B, 1)
 
         elif mode == "ar":
             idx = lengths - 1                     # last valid time-step per batch

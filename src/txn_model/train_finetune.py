@@ -6,7 +6,7 @@ Loads encoder weights from pretrained_backbone.pt and freezes them unless
 """
 import argparse, time, torch, torch.nn as nn
 from pathlib import Path
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, WeightedRandomSampler
 
 from config            import (ModelConfig, TransformerConfig, LSTMConfig)
 from data.dataset      import TxnDataset, collate_fn, slice_batch
@@ -14,31 +14,50 @@ from data.preprocessing import preprocess
 from model import TransactionModel
 from evaluate   import evaluate, evaluate_binary      # loss + acc per class
 from utils             import save_ckpt, load_ckpt
-
+import time
+import sys
+import traceback
+from pathlib import Path
+import pandas as pd
+import torch
+import torch.nn as nn
+import wandb
+from tqdm.auto import tqdm
+from sklearn.utils import resample
+import numpy as np
 import yaml
 from utils import load_cfg, merge
 
 # --- 1. include --config flag -----------
-ap = argparse.ArgumentParser()
-ap.add_argument("--config", default="configs/pretrain.yaml")
-ap.add_argument("--data_dir")         # still allow overrides
-ap.add_argument("--epochs",    type=int)
-ap.add_argument("--batch_size",type=int)
-ap.add_argument("--lr",        type=float)
-ap.add_argument("--window",    type=int)
-ap.add_argument("--unfreeze",  action="store_true")   # finetune only
-ap.add_argument("--cat_features",  nargs="+", default=None,
-                help="List of categorical column names")
-ap.add_argument("--cont_features", nargs="+", default=None,
-                help="List of continuous column names")
-ap.add_argument("--resume",      action="store_true")
+ap = argparse.ArgumentParser(description="Train / fine-tune TransactionModel")
 
-# ── LSTM head ───────────────────────────────────────────────────────────────
-ap.add_argument("--lstm_hidden",  type=int,   help="LSTM hidden size")
-ap.add_argument("--lstm_layers",  type=int,   help="Number of LSTM layers")
-ap.add_argument("--lstm_classes", type=int, help="Number of LSTM classes")
-ap.add_argument("--lstm_dropout", type=float, help="Dropout within LSTM")
+# ───────────── paths / run control ───────────────────────────────────────────
+ap.add_argument("--resume",        action="store_true", help="Resume from latest checkpoint in data_dir")
+ap.add_argument("--config",        type=str,            help="YAML file with default hyper-params", default="configs/finetune.yaml")
+ap.add_argument("--data_dir",      type=str,            help="Root directory of raw or processed data")
+
+# ───────────── training loop hyper-params ────────────────────────────────────
+ap.add_argument("--total_epochs",  type=int,            help="Number of training epochs")
+ap.add_argument("--batch_size",    type=int,            help="Batch size for training")
+ap.add_argument("--lr",            type=float,          help="Initial learning rate")
+ap.add_argument("--window",        type=int,            help="Sequence length (transactions per sample)")
+ap.add_argument("--stride",        type=int,            help="Stride length between windows")
+
+# ───────────── finetuning control ───────────────────────────────────────────
+ap.add_argument("--unfreeze",      action="store_true", help="Unfreeze backbone model parameters for fine-tuning")
+
+# ───────────── feature lists ────────────────────────────────────────────────
+ap.add_argument("--cat_features",  type=str,            help="Categorical column names (override YAML)", nargs="+")
+ap.add_argument("--cont_features", type=str,            help="Continuous column names  (override YAML)", nargs="+")
+
+# ───────────── LSTM head ─────────────────────────────────────────────────────
+ap.add_argument("--lstm_hidden",   type=int,            help="LSTM hidden size")
+ap.add_argument("--lstm_layers",   type=int,            help="Number of LSTM layers")
+ap.add_argument("--lstm_classes",  type=int,            help="Number of LSTM classes")
+ap.add_argument("--lstm_dropout",  type=float,          help="Dropout within LSTM")
+
 cli = ap.parse_args()
+
 
 
 # --- 2. merge file + CLI ---------------
@@ -50,89 +69,280 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 cache = Path(args.data_dir) / "processed_data.pt"
 if cache.exists():
     print("Processed data exists, loading now.")
-    train_df, val_df, enc, cat_features, cont_features = torch.load(cache,  weights_only=False)
+    train_df, val_df, test_df, enc, cat_features, cont_feature, scaler = torch.load(cache,  weights_only=False)
     print("Processed data loaded.")
 else:
     print("Preprocessed data not found. Processing now.")
     raw = Path(args.data_dir) / "card_transaction.v1.csv"
     train_df, val_df, test_df, enc, cat_features, cont_features, scaler = preprocess(raw, args.cat_features, args.cont_features)
     print("Finished processing data. Now saving.")
-    torch.save((train_df, val_df, enc, cat_features, cont_features), cache)
+    torch.save((train_df, val_df, test_df, enc, cat_features, cont_features, scaler), cache)
     print("Processed data saved.")
+
+train_ds = TxnDataset(train_df, cat_features[0], cat_features, cont_features,
+               args.window, args.window)
+val_ds = TxnDataset(val_df, cat_features[0], cat_features, cont_features,
+               args.window, args.window)
 print("Creating training loader")
-train_loader = DataLoader(
-    TxnDataset(train_df, cat_features[0], cat_features, cont_features,
-               args.window, args.window),
-    batch_size=args.batch_size, shuffle=True, collate_fn=collate_fn)
 
-print("Creating validation loader")
-val_loader   = DataLoader(
-    TxnDataset(val_df, cat_features[0], cat_features, cont_features,
-               args.window, args.window),
-    batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn)
+def ratio_sampler(ds: TxnDataset, target_pos_frac: float) -> WeightedRandomSampler:
+    """
+    Build a sampler that draws approximately `target_pos_frac` of its samples
+    from the positive class and (1-target_pos_frac) from negative.
+    """
+    # 1) get the per-window “last-transaction” labels
+    gidx = ds.indices[:, 0]
+    offs = ds.indices[:, 1]
+    ends = np.array([
+        ds.group_offsets[g][0] + off + ds.window - 1
+        for g, off in zip(gidx, offs)
+    ], dtype=np.int32)
+    labels = ds.labels[ends]  # array of 0/1
 
+    # 2) base inverse-frequency weights (makes 50/50 by default)
+    counts = np.bincount(labels, minlength=2)     # [neg_count, pos_count]
+    base_weights = 1.0 / counts[labels]
 
+    # 3) scale each class so its expected share becomes target_pos_frac
+    #    originally each class has sum(base_weights)==1 => 50/50
+    factor_pos = 2 * target_pos_frac               # e.g. 0.3→0.6
+    factor_neg = 2 * (1 - target_pos_frac)         # e.g. 0.7→1.4
 
-# ─── Load backbone & optionally freeze encoder ─────────────────────────────
-backbone = Path(args.data_dir) / "pretrained_backbone.pt"
-if backbone.exists():
-    model.load_state_dict(torch.load(backbone, map_location=device,  weights_only=False), strict=False)
-    print(f"Loaded backbone from {backbone}")
-else:
-    print("⚠  Backbone not found – training from scratch.")
+    # 4) apply the scaling
+    weights = base_weights * np.where(labels==1, factor_pos, factor_neg)
 
-if not args.unfreeze:
-    for n, p in model.named_parameters():
-        if not n.startswith(("lstm_head", "ar_cat_head", "ar_cont_head")):
-            p.requires_grad = False
-    print("Encoder frozen.  Pass --unfreeze to fine-tune it.")
-
-
-if backbone.exists():
-    ckpt = torch.load(backbone, map_location=device, weights_only=False)
-    finetune_config = ckpt["config"].copy()
-    finetune_config.lstm_config = LSTMConfig(
-        hidden_size=finetune_config.sequence_transformer.d_model, # must match
-        num_layers=args.lstm_num_layers,
-        num_classes=args.lstm_num_classes,
-        dropout=args.lstm_dropout
+    return WeightedRandomSampler(
+        weights     = weights, # type: ignore
+        num_samples = len(labels),
+        replacement = True,
     )
-    model = TransactionModel(finetune_config).to(device)
-    model.load_state_dict(tor)
+train_sampler = ratio_sampler(train_ds, target_pos_frac=0.3)
+val_sampler   = ratio_sampler(val_ds,   target_pos_frac=0.3)      # now uses val label distribution
+
+train_loader = DataLoader(
+    train_ds,
+    batch_size = args.batch_size,
+    sampler    = train_sampler,
+    collate_fn = collate_fn,
+)
+
+val_loader = DataLoader(
+    val_ds,
+    batch_size = args.batch_size,
+    sampler    = val_sampler,
+    collate_fn = collate_fn,
+)
 
 
-optim = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()),
-                         lr=float(args.lr))
-criterion = nn.CrossEntropyLoss(weight=torch.tensor([0.5, 400.0], device=device))
+# val_loader = DataLoader(
+#     val_ds,
+#     batch_size   = args.batch_size,
+#     shuffle      = False,       # natural ordering
+#     collate_fn   = collate_fn,
+# )
 
-best_val, start_ep = load_ckpt(Path(args.data_dir) / "finetune.ckpt",
-                               device, model, optim, cat_features, cont_features)
+# print("Creating validation loader")
 
-# ─── Training loop ─────────────────────────────────────────────────────────
-for ep in range(start_ep, args.epochs):
-    t0 = time.perf_counter(); model.train(); tot_loss = 0; epoch_sample_count = 0
-    for batch in train_loader:
-        cat = batch["cat"][:, :-1].to(device)
-        con = batch["cont"][:, :-1].to(device)
-        pad = batch["pad_mask"][:, :-1].bool().to(device)
-        y   = batch["label"].to(device)
 
-        logits = model(cat, con, pad, mode="fraud")
-        loss   = criterion(logits, y)
 
-        optim.zero_grad(); loss.backward(); optim.step()
-        batch_size = y.size(0); tot_loss += loss.item() * batch_size; epoch_sample_count += batch_size
-    train_loss = tot_loss / epoch_sample_count
 
-    val_loss, val_acc, _ = evaluate_binary(model, val_loader, criterion, device)
-    print(f"Epoch {ep+1}/{args.epochs} | train {train_loss:.4f} "
-          f"| val {val_loss:.4f} ({val_acc*100:.2f}%) "
-          f"| Δt {time.perf_counter()-t0:.1f}s")
+print("Starting fine-tuning loop")
 
-    if val_loss < best_val - 1e-5:
-        best_val = val_loss
-        save_ckpt(model, optim, ep, best_val,
-                  Path(args.data_dir) / "finetune.ckpt",
-                  cat_features, cont_features, cfg)
+# progress bar format (reuse from pretrain)
+bar_fmt = (
+    "{l_bar}{bar:25}| "
+    "{n_fmt}/{total_fmt} batches "
+    "({percentage:3.0f}%) | "
+    "elapsed: {elapsed} | ETA: {remaining} | "
+    "{rate_fmt} | "
+    "{postfix}"
+)
 
-print("Fine-tune finished ✓  best val_loss", best_val)
+backbone_path = Path(args.data_dir) / "pretrained_backbone.pt"
+finetune_ckpt = Path(args.data_dir) / "finetune.ckpt"
+# pos_weight = torch.tensor(818.5349, dtype=torch.float32)
+
+if args.resume and finetune_ckpt.exists():
+    # resume entire fine-tune run
+    model, best_val, start_epoch = load_ckpt(finetune_ckpt, device)
+    print(f"Resumed fine-tune from epoch {start_epoch}, best val={best_val:.4f}")
+else:
+    # --- load backbone config & weights ---
+    if not backbone_path.exists():
+        raise FileNotFoundError(f"Backbone checkpoint not found at {backbone_path}")
+    ckpt = torch.load(backbone_path, map_location=device, weights_only=False)
+    cfg = ckpt["config"]
+
+    # inject the new LSTM head config
+    cfg.lstm_config = LSTMConfig(
+        hidden_size = args.lstm_hidden,
+        num_layers  = args.lstm_layers,
+        num_classes = args.lstm_classes,
+        dropout     = args.lstm_dropout,
+    )
+    # print(cfg)
+    # print("------------------")
+    # print(cfg.lstm_config)
+    # build model and load backbone weights (all except LSTM head)
+    model = TransactionModel(cfg).to(device)
+    model.load_state_dict(ckpt["model_state"], strict=False)
+    print(f"Loaded backbone from {backbone_path}")
+
+    # --- freeze or unfreeze ---
+    if not args.unfreeze:
+        for name, param in model.named_parameters():
+            if not name.startswith("lstm_head"):
+                param.requires_grad = False
+        print("Encoder frozen. Pass --unfreeze to fine-tune it.")
+    else:
+        print("Unfreezing entire model for full fine-tuning.")
+
+    # optimizer: only parameters with requires_grad=True
+    optim = torch.optim.Adam(
+        filter(lambda p: p.requires_grad, model.parameters()),
+        lr = args.lr
+    )
+
+    # classification loss for LSTM head
+    criterion = nn.BCEWithLogitsLoss()
+    start_epoch = 0
+    best_val    = float("inf")
+
+
+print("Starting fine-tune training loop")
+
+# Ensure epochs sanity
+if start_epoch >= args.total_epochs:
+    raise IndexError(
+        f"Start epoch ({start_epoch}) >= total_epochs ({args.total_epochs})"
+    )
+
+# Initialize Weights & Biases
+run = wandb.init(
+    project="txn",
+    name   = f"finetune-{Path(args.data_dir).stem}",
+    config = vars(args),
+    resume = "allow" if args.resume else False,
+)
+wandb.watch(model, log="all", log_freq=100)
+
+# Early-stopping setup
+patience = 5
+ep_no_improve = 0
+try:
+    for ep in range(start_epoch, args.total_epochs):
+        prog_bar = tqdm(
+            train_loader,
+            desc=f"Epoch {ep+1}/{args.total_epochs}",
+            unit="batch",
+            total=len(train_loader),
+            bar_format=bar_fmt,
+            ncols=200,
+            leave=False,
+        )
+
+        model.train()
+        tot_loss = 0.0
+        sample_count = 0
+        tot_correct = 0
+        t0 = time.perf_counter()
+        batch_idx = 0
+        for batch in prog_bar:
+            cat_inp = batch["cat"][:, :-1].to(device)
+            cont_inp = batch["cont"][:, :-1].to(device)
+            pad_mask = batch["pad_mask"][:, :-1].bool().to(device)
+            labels = batch["label"].unsqueeze(1).to(device).float()
+
+            fraud_in_batch = labels.sum().item()
+            if batch_idx < 3:  # only first three batches each epoch
+                print(
+                    f"[epoch {ep+1:02d} | batch {batch_idx:03d}]  "
+                    f"fraud={fraud_in_batch}  "
+                    f"non-fraud={labels.size(0) - fraud_in_batch}"
+                )
+
+            
+
+            logits = model(cat_inp, cont_inp, pad_mask, mode="fraud")  # (B,1)
+            loss = criterion(logits, labels)
+
+            optim.zero_grad()
+            loss.backward()
+            optim.step()
+
+            probs   = torch.sigmoid(logits)          # (B,1)
+            preds   = (probs > 0.5).float()          # (B,1)
+            tot_correct += (preds == labels).sum().item()
+            batch_size = labels.size(0)
+            tot_loss += loss.item() * batch_size
+            sample_count += batch_size
+            prog_bar.set_postfix({"loss": f"{loss.item():.4f}"})
+            batch_idx += 1
+
+        train_loss = tot_loss / sample_count
+        train_acc  = tot_correct / sample_count
+        print(train_acc)
+        wandb.log({"training_loss": train_loss})
+
+        # ── validation ──────────────────────────────────────────────────────
+        val_loss, val_metrics = evaluate_binary(
+            model, val_loader, criterion, device,
+            class_names=["non-fraud", "fraud"],
+        )
+
+        # log every validation statistic under a common prefix
+        wandb.log({
+            "val_loss": val_loss,
+            **{f"val_{k}": v for k, v in val_metrics.items()},
+        })
+
+        epoch_time_min = (time.perf_counter() - t0) / 60.0
+        wandb.log({"epoch_time_min": epoch_time_min})
+
+        print(
+            f"Epoch {ep+1}/{args.total_epochs} | "
+            f"train {train_loss:.4f} | "
+            f"val {val_loss:.4f} "
+            f"(acc {val_metrics['accuracy']*100:.2f}%, "
+            f"F1 {val_metrics['f1']:.3f}, "
+            f"AUC {val_metrics['roc_auc']:.3f}) | "
+            f"{epoch_time_min:.2f} min"
+        )
+        # ── early-stopping / checkpoint ─────────────────────────────────────
+        if val_loss < best_val - 1e-5:
+            best_val = val_loss
+            ep_no_improve = 0
+            print("New best validation loss. Saving checkpoint.")
+            ckpt_path = Path(args.data_dir) / "finetune.ckpt"
+            # save_ckpt(
+            #     model, optim, ep, best_val,
+            #     ckpt_path, cat_features, cont_features, cfg
+            # )
+            wandb.run.summary["best_val_loss"] = best_val # type: ignore
+        else:
+            ep_no_improve += 1
+            if ep_no_improve >= patience:
+                print(f"No improvement for {patience} epochs. Stopping early.")
+                break
+
+except RuntimeError as e:
+    if "out of memory" in str(e).lower():
+        run.alert(
+            title="CUDA OOM",
+            text=f"OOM at batch_size={args.batch_size}. Marking failed."
+        )
+        run.finish(exit_code=97)
+        sys.exit(97)
+    else:
+        traceback.print_exc()
+        run.finish(exit_code=98)
+        sys.exit(98)
+
+finally:
+    ckpt_path = Path(args.data_dir) / "finetune.ckpt"
+    if wandb.run is not None and ckpt_path.exists():
+        artifact = wandb.Artifact("finetune-model", type="model")
+        artifact.add_file(str(ckpt_path))
+        wandb.log_artifact(artifact)
+        run.finish()
+    print(f"Fine-tuning complete. Best val_loss: {best_val:.4f}")

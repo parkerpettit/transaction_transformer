@@ -1,22 +1,38 @@
-data_dir:    data
-window:      20
+# I/O
+data_dir: data         # Root directory of raw or processed data
 
 cat_features: ['User', 'Card', 'Use Chip',
        'Merchant Name', 'Merchant City', 'Merchant State', 'Zip', 'MCC',
        'Errors?', 'Year','Month','Day','Hour']
 
-cont_features: ["Amount"]
+# ───────────── training loop hyper-parameters ────────────────────────────────
+total_epochs: 10      # Number of training epochs
+batch_size:   256     # Batch size for training
+lr:        2.19e-4   # Initial learning rate
+window:       10       # Sequence length (transactions per sample)
+stride:       10       # Stride length between windows
+# ───────────── feature lists ────────────────────────────────────────────────
+cat_features:
+  - User
+  - Card
+  - Use Chip
+  - Merchant Name
+  - Merchant City
+  - Merchant State
+  - Zip
+  - MCC
+  - Errors?
+  - Year
+  - Month
+  - Day
+  - Hour
+cont_features:
+  - Amount  
 
-epochs:      5
-batch_size:  32
-lr:          1.0e-4
-unfreeze:    false                 # true → train encoder too
+# 
+unfreeze:    True               
 
-emb_dim:     48
-dropout:     0.10
-field_tf:    {d_model: 48,  n_heads: 4, depth: 1}
-sequence_tf: {d_model: 256, n_heads: 4, depth: 4}
-lstm:
-  hidden:    256
-  layers:    2
-  dropout:   0.10
+lstm_hidden:  256
+lstm_layers:  2
+lstm_classes: 1
+lstm_dropout: 0.1

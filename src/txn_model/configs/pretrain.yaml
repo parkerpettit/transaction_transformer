@@ -3,7 +3,7 @@ data_dir: data         # Root directory of raw or processed data
 
 # ───────────── training loop hyper-parameters ────────────────────────────────
 total_epochs: 10      # Number of training epochs
-batch_size:   256     # Batch size for training
+batch_size:   1024     # Batch size for training
 lr:        2.19e-4   # Initial learning rate
 window:       10       # Sequence length (transactions per sample)
 stride:       5       # Stride length between windows
@@ -31,11 +31,11 @@ cont_features:
 emb_dropout: 0.0860     # Dropout after embedding layer
 
 # ── Field-level transformer (intra-row) ──────────────────────────────────────
-ft_d_model:        48        # Hidden dimension
+ft_d_model:        32        # Hidden dimension
 ft_depth:          2         # Number of layers
 ft_n_heads:        4         # Number of attention heads
 ft_ffn_mult:       2         # Feedforward expansion factor
-ft_dropout:  0.0289      # Dropout within field-transformer
+ft_dropout:        0.0289      # Dropout within field-transformer
 ft_layer_norm_eps: 1.0e-6    # Layer-norm epsilon
 ft_norm_first:     True      # Whether to apply norm before attention
 
@@ -44,7 +44,7 @@ seq_d_model:        384      # Hidden dimension
 seq_depth:          2        # Number of layers
 seq_n_heads:        8        # Number of attention heads
 seq_ffn_mult:       4       # Feedforward expansion factor
-seq_dropout: 0.0747     # Dropout within sequence-transformer
+seq_dropout:        0.0747     # Dropout within sequence-transformer
 seq_layer_norm_eps: 1.0e-6   # Layer-norm epsilon
 seq_norm_first:     True     # Whether to apply norm before attention
 
