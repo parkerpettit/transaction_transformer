@@ -3,8 +3,7 @@ import torch
 import torch.nn as nn
 from config import (
     ModelConfig,
-    FieldTransformerConfig,
-    SequenceTransformerConfig,
+    TransformerConfig,
     LSTMConfig,
 )
 from model import TransactionModel

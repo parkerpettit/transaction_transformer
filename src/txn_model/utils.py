@@ -17,7 +17,7 @@ from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 from typing import List, Tuple
-
+from model import TransactionModel
 import torch
 from torch import nn, optim
 
@@ -31,7 +31,7 @@ log = logging.getLogger(__name__)
 # ──────────────────────────────────────────────────────────────────────────────
 def save_ckpt(
     model: nn.Module,
-    optimizer: optim.Optimizer,
+    optim: optim.Optimizer,
     epoch: int,
     best_val: float,
     path: str | Path,
@@ -43,27 +43,20 @@ def save_ckpt(
     Persist training state to *path* and sanity-check that it was written.
     """
     path = Path(path)
-    log.info("Saving checkpoint → %s (epoch %d)", path, epoch)
-
+    print(f"Saving checkpoint at {path}")
     torch.save(
         {
             "epoch":        epoch,
             "best_val":     best_val,
             "model_state":  model.state_dict(),
-            "optim_state":  optimizer.state_dict(),
+            "optim_state":  optim.state_dict(),
             "cat_features": cat_features,
             "cont_features": cont_features,
-            "config":       asdict(cfg),
+            "config":       cfg,
         },
         path,
     )
 
-    # quick verification
-    cp = torch.load(path, map_location="cpu", weights_only=False)
-    assert cp["epoch"] == epoch, "checkpoint epoch mismatch – write error?"
-
-    sz = path.stat().st_size / 1_048_576
-    log.info("Checkpoint written (%.1f MB, %s)", sz, time.ctime(path.stat().st_mtime))
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -72,52 +65,32 @@ def save_ckpt(
 def load_ckpt(
     path: str | Path,
     device: torch.device,
-    model: nn.Module,
-    optimizer: optim.Optimizer,
-    cat_features: List[str],
-    cont_features: List[str],
-) -> Tuple[float, int]:
+) -> Tuple[nn.Module, float, int]:
     """
     Returns
     -------
+    model: Model found at given path
     best_val : float
         Best validation loss stored in checkpoint; inf if starting from scratch.
     start_epoch : int
         Epoch index to continue with (0-based). 0 means train from scratch.
     """
     path = Path(path)
-    log.info("↺  Looking for checkpoint in %s", path)
 
     if not path.exists():
-        log.info("No checkpoint found – starting fresh.")
-        return float("inf"), 0
+        raise FileNotFoundError(f"Told model to resume training from a checkpoint, but no checkpoint exists at the given directory: {path}")
 
     ckpt = torch.load(path, map_location=device, weights_only=False)
-    saved_cat, saved_cont = ckpt.get("cat_features", []), ckpt.get("cont_features", [])
-
-    if saved_cat != cat_features or saved_cont != cont_features:
-        # ── feature lists changed – archive old file ───────────────────────
-        log.warning("Feature set changed since last run – archiving old checkpoint.")
-        if saved_cat != cat_features:
-            log.warning("   categorical: %s → %s", saved_cat, cat_features)
-        if saved_cont != cont_features:
-            log.warning("   continuous  : %s → %s", saved_cont, cont_features)
-
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        archive_name = path.with_name(f"{path.stem}_old_{ts}{path.suffix}")
-        path.rename(archive_name)
-        log.info("Old checkpoint moved to %s", archive_name)
-
-        return float("inf"), 0
-
-    # ── safe to resume ─────────────────────────────────────────────────────
+    model = TransactionModel(ckpt["config"])
     model.load_state_dict(ckpt["model_state"])
-    optimizer.load_state_dict(ckpt["optim_state"])
+
+    optim  = torch.optim.Adam(model.parameters())
+    optim.load_state_dict(ckpt["optim_state"])
+
     best_val = ckpt.get("best_val", float("inf"))
     start_ep = ckpt.get("epoch", 0) + 1
 
-    log.info("Resumed from epoch %d  (best_val %.4f)", start_ep, best_val)
-    return best_val, start_ep
+    return model, best_val, start_ep
 
 
 # utils_cfg.py

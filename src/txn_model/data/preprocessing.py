@@ -31,6 +31,18 @@ def preprocess(
     """Efficient vectorized preprocessing for transaction data."""
     # 1) Read only needed columns
     df = pd.read_csv(file)
+    # REMOVE LATER, JUST FOR TESTING FASTEST BATCH FOR MY GPU
+    def sample_n_users(df):
+        rng     = np.random.default_rng(42)
+        users   = df["User"].unique()
+        keepers = rng.choice(users, size=50, replace=False)
+        return df[df["User"].isin(keepers)].copy()
+    df = sample_n_users(df)
+
+    # usage
+
+   
+
 
     # 2) Generate binary fraud flag
     df["is_fraud"] = df["Is Fraud?"].str.lower().map({"yes": 1, "no": 0}).astype(np.int8)

@@ -24,15 +24,13 @@ def main():
     df = pd.read_csv(csv_path)
     
     # 3) define categorical vs numeric
-    cat_cols = df.select_dtypes(include=["object", "category"]).columns.tolist()
+    cat_cols = ['User', 'Card', 'Use Chip',
+       'Merchant Name', 'Merchant City', 'Merchant State', 'Zip', 'MCC',
+       'Errors?', 'Year','Month','Day']
     # treat integer columns with few unique values as categorical
-    for col in df.select_dtypes(include=["int"]).columns:
-        if df[col].nunique() < 50:
-            cat_cols.append(col)
-    # drop duplicates
-    cat_cols = list(dict.fromkeys(cat_cols))
-    num_cols = df.select_dtypes(include=["float"]).columns.tolist()
 
+    # drop duplicates
+    num_cols = ["Amount"]
     # 4) basic metrics
     total_rows      = len(df)
     num_users       = df["User"].nunique() if "User" in df.columns else None
@@ -127,20 +125,27 @@ def main():
         pivot_str = pivot.applymap(lambda x: f"{int(x):,}")
         html.append(pivot_str.to_html(border=1))
 
-    # 11) random guessing accuracy for categorical features
+ # 11) random guessing accuracy for categorical features (most frequent class rate)
     if cat_cols:
         html.append("<h3>Random Guessing Accuracy by Categorical Feature</h3>")
-        rg_df = pd.DataFrame({
-            "feature": cat_cols,
-            "unique_count": [df[c].nunique() for c in cat_cols],
-            "random_accuracy": [1/df[c].nunique() for c in cat_cols]
-        })
+        data = []
+        for col in cat_cols:
+            vc = df[col].value_counts(normalize=True)
+            most_freq = vc.iloc[0]
+            uniq = df[col].nunique()
+            data.append({
+                "feature": col,
+                "unique_count": uniq,
+                "most_freq_rate": most_freq
+            })
+        rg_df = pd.DataFrame(data)
         html.append(rg_df.to_html(index=False, border=1,
             formatters={
                 "unique_count": lambda x: f"{int(x):,}",
-                "random_accuracy": lambda x: f"{x:.4%}"
+                "most_freq_rate": lambda x: f"{x:.4%}"
             }
         ))
+
 
     # 12) finish
     html.append("</body></html>")

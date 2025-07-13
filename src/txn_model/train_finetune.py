@@ -8,8 +8,7 @@ import argparse, time, torch, torch.nn as nn
 from pathlib import Path
 from torch.utils.data import DataLoader
 
-from config            import (ModelConfig, FieldTransformerConfig,
-                                SequenceTransformerConfig, LSTMConfig)
+from config            import (ModelConfig, TransformerConfig, LSTMConfig)
 from data.dataset      import TxnDataset, collate_fn, slice_batch
 from data.preprocessing import preprocess
 from model import TransactionModel
@@ -32,7 +31,15 @@ ap.add_argument("--cat_features",  nargs="+", default=None,
                 help="List of categorical column names")
 ap.add_argument("--cont_features", nargs="+", default=None,
                 help="List of continuous column names")
+ap.add_argument("--resume",      action="store_true")
+
+# ── LSTM head ───────────────────────────────────────────────────────────────
+ap.add_argument("--lstm_hidden",  type=int,   help="LSTM hidden size")
+ap.add_argument("--lstm_layers",  type=int,   help="Number of LSTM layers")
+ap.add_argument("--lstm_classes", type=int, help="Number of LSTM classes")
+ap.add_argument("--lstm_dropout", type=float, help="Dropout within LSTM")
 cli = ap.parse_args()
+
 
 # --- 2. merge file + CLI ---------------
 file_params = load_cfg(cli.config)
@@ -42,35 +49,29 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # ─── Data ───────────────────────────────────────────────────────────────────
 cache = Path(args.data_dir) / "processed_data.pt"
 if cache.exists():
-    train_df, val_df, enc, cat_features, cont_features = torch.load(cache, weights_only=False)
+    print("Processed data exists, loading now.")
+    train_df, val_df, enc, cat_features, cont_features = torch.load(cache,  weights_only=False)
+    print("Processed data loaded.")
 else:
+    print("Preprocessed data not found. Processing now.")
     raw = Path(args.data_dir) / "card_transaction.v1.csv"
-    train_df, val_df, test_df, enc, cat_features, cont_features, scaler = preprocess(raw, args.cat_features,
-        args.cont_features)
+    train_df, val_df, test_df, enc, cat_features, cont_features, scaler = preprocess(raw, args.cat_features, args.cont_features)
+    print("Finished processing data. Now saving.")
     torch.save((train_df, val_df, enc, cat_features, cont_features), cache)
-
+    print("Processed data saved.")
+print("Creating training loader")
 train_loader = DataLoader(
     TxnDataset(train_df, cat_features[0], cat_features, cont_features,
                args.window, args.window),
     batch_size=args.batch_size, shuffle=True, collate_fn=collate_fn)
+
+print("Creating validation loader")
 val_loader   = DataLoader(
     TxnDataset(val_df, cat_features[0], cat_features, cont_features,
                args.window, args.window),
     batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn)
 
-# ─── Full model cfg (now includes LSTM head) ───────────────────────────────
-cfg = ModelConfig(
-    cat_vocab_sizes = {k: len(enc[k]["inv"]) for k in cat_features},
-    cont_features   = cont_features,
-    emb_dim         = 48,
-    dropout         = 0.10,
-    padding_idx     = 0,
-    total_epochs    = args.epochs,
-    field_transformer = FieldTransformerConfig(48, 4, 1, 2, 0.10, 1e-6, True),
-    sequence_transformer = SequenceTransformerConfig(256, 4, 4, 2, 0.10, 1e-6, True),
-    lstm_config = LSTMConfig(256, 2, 2, 0.10),      # binary output
-)
-model = TransactionModel(cfg).to(device)
+
 
 # ─── Load backbone & optionally freeze encoder ─────────────────────────────
 backbone = Path(args.data_dir) / "pretrained_backbone.pt"
@@ -85,6 +86,20 @@ if not args.unfreeze:
         if not n.startswith(("lstm_head", "ar_cat_head", "ar_cont_head")):
             p.requires_grad = False
     print("Encoder frozen.  Pass --unfreeze to fine-tune it.")
+
+
+if backbone.exists():
+    ckpt = torch.load(backbone, map_location=device, weights_only=False)
+    finetune_config = ckpt["config"].copy()
+    finetune_config.lstm_config = LSTMConfig(
+        hidden_size=finetune_config.sequence_transformer.d_model, # must match
+        num_layers=args.lstm_num_layers,
+        num_classes=args.lstm_num_classes,
+        dropout=args.lstm_dropout
+    )
+    model = TransactionModel(finetune_config).to(device)
+    model.load_state_dict(tor)
+
 
 optim = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()),
                          lr=float(args.lr))

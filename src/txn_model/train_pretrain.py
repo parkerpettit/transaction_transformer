@@ -9,8 +9,7 @@ import argparse, time, torch, torch.nn as nn
 from pathlib import Path
 from torch.utils.data import DataLoader
 
-from config            import (ModelConfig, FieldTransformerConfig,
-                                SequenceTransformerConfig)
+from config            import (ModelConfig, TransformerConfig)
 from data.dataset      import TxnDataset, collate_fn, slice_batch
 from data.preprocessing import preprocess
 from model import TransactionModel
@@ -22,6 +21,7 @@ import time
 from tqdm.auto import tqdm  
 from utils import save_ckpt
 import signal, sys
+import wandb, torch, traceback, sys
 
 def show_samples(cat_inp, cat_tgt, cat_preds,
                  cont_tgt, cont_preds,
@@ -62,12 +62,6 @@ def graceful_exit(signum=None, frame=None):
     #     torch.save(model.state_dict(), ckpt_int)
     #     print(f"\n[Ctrl-C] Saved interrupt checkpoint → {ckpt_int}")
 
-    # 2. Let W&B know the run is over
-    try:
-        wandb.finish()
-    except Exception:
-        pass
-
     print("[Ctrl-C] Exiting now.")
     sys.exit(0)
 
@@ -75,23 +69,53 @@ def graceful_exit(signum=None, frame=None):
 signal.signal(signal.SIGINT, graceful_exit)
 
 
-# --- 1. include --config flag -----------
-ap = argparse.ArgumentParser()
-ap.add_argument("--config", default="configs/pretrain.yaml")
-ap.add_argument("--data_dir")         # still allow overrides
-ap.add_argument("--epochs",    type=int)
-ap.add_argument("--batch_size",type=int)
-ap.add_argument("--lr",        type=float)
-ap.add_argument("--window",    type=int)
-ap.add_argument("--unfreeze",  action="store_true")   # finetune only
-ap.add_argument("--cat_features",  nargs="+", default=None,
-                help="List of categorical column names")
-ap.add_argument("--cont_features", nargs="+", default=None,
-                help="List of continuous column names")
-ap.add_argument("--resume", action="store_true",
-                help="Resume training from pretrained_backbone.pt in data_dir")
+
+ap = argparse.ArgumentParser(description="Train / fine-tune TransactionModel")
+
+
+# ───────────── paths / run control ───────────────────────────────────────────
+ap.add_argument("--resume", action="store_true",    help="Resume from latest checkpoint in data_dir")
+ap.add_argument("--config",            type=str,    help="YAML file with default hyper-params", default="configs/pretrain.yaml")
+ap.add_argument("--data_dir",          type=str,    help="Root directory of raw or processed data")
+
+# ───────────── training loop hyper-params ────────────────────────────────────
+ap.add_argument("--total_epochs",      type=int,    help="Number of training epochs")
+ap.add_argument("--batch_size",        type=int,    help="Batch size for training")
+ap.add_argument("--lr",                type=float,  help="Initial learning rate")
+ap.add_argument("--window",            type=int,    help="Sequence length (transactions per sample)")
+ap.add_argument("--stride",            type=int,    help="Stride length between windows")
+
+# ───────────── feature lists ────────────────────────────────────────────────
+ap.add_argument("--cat_features",      type=str,    help="Categorical column names (override YAML)", nargs="+")
+ap.add_argument("--cont_features",     type=str,    help="Continuous column names  (override YAML)", nargs="+")
+
+# ───────────── architecture: embedding layer ────────────────────────────────
+ap.add_argument("--emb_dropout",        type=float, help="Dropout after embedding layer")
+
+# ── Field-level transformer (intra-row) ──────────────────────────────────────
+ap.add_argument("--ft_d_model",         type=int,   help="Field-transformer hidden dimension")
+ap.add_argument("--ft_depth",           type=int,   help="Field-transformer number of layers")
+ap.add_argument("--ft_n_heads",         type=int,   help="Field-transformer number of attention heads")
+ap.add_argument("--ft_ffn_mult",        type=int,   help="Field-transformer feedforward expansion factor")
+ap.add_argument("--ft_dropout",         type=float, help="Dropout within field-transformer")
+ap.add_argument("--ft_layer_norm_eps",  type=float, help="Layer norm epsilon for field-transformer")
+ap.add_argument("--ft_norm_first",      type=bool,  help="Norm first for field-transformer")
+# ── Sequence-level transformer (inter-row) ───────────────────────────────────
+ap.add_argument("--seq_d_model",        type=int,   help="Sequence-transformer hidden dimension")
+ap.add_argument("--seq_depth",          type=int,   help="Sequence-transformer number of layers")
+ap.add_argument("--seq_n_heads",        type=int,   help="Sequence-transformer number of attention heads")
+ap.add_argument("--seq_ffn_mult",       type=int,   help="Sequence-transformer feedforward expansion factor")
+ap.add_argument("--seq_dropout",        type=float, help="Dropout within sequence-transformer")
+ap.add_argument("--seq_layer_norm_eps", type=float, help="Layer norm epsilon for sequence-transformer")
+ap.add_argument("--seq_norm_first",     type=bool,  help="Norm first for sequence-transformer")
+
+
+# ── Final classification layer ──────────────────────────────────────────────
+ap.add_argument("--clf_dropout",  type=float, help="Dropout before final classification layer")
 
 cli = ap.parse_args()
+
+
 
 # --- 2. merge file + CLI ---------------
 file_params = load_cfg(cli.config)
@@ -111,39 +135,21 @@ else:
     raw = Path(args.data_dir) / "card_transaction.v1.csv"
     train_df, val_df, test_df, enc, cat_features, cont_features, scaler = preprocess(raw, args.cat_features, args.cont_features)
     print("Finished processing data. Now saving.")
-    torch.save((train_df, val_df, enc, cat_features, cont_features), cache)
+    torch.save((train_df, val_df, test_df, enc, cat_features, cont_features), cache)
     print("Processed data saved.")
 print("Creating training loader")
 train_loader = DataLoader(
     TxnDataset(train_df, cat_features[0], cat_features, cont_features,
-               args.window, args.window),
-    batch_size=args.batch_size, shuffle=True, collate_fn=collate_fn)
+               args.window, args.stride),
+    batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn)
 
 print("Creating validation loader")
 val_loader   = DataLoader(
     TxnDataset(val_df, cat_features[0], cat_features, cont_features,
-               args.window, args.window),
+               args.window, args.stride),
     batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn)
 
-# ─── Model config with *no* LSTM head ──────────────────────────────────────
-cfg = ModelConfig(
-    cat_vocab_sizes = {k: len(enc[k]["inv"]) for k in cat_features},
-    cont_features   = cont_features,
-    emb_dim         = 48,
-    dropout         = 0.10,
-    padding_idx     = 0,
-    total_epochs    = args.epochs,
-    field_transformer = FieldTransformerConfig(48, 4, 1, 2, 0.10, 1e-6, True),
-    sequence_transformer = SequenceTransformerConfig(256, 4, 4, 2, 0.10, 1e-6, True),
-    lstm_config     = None,               # ← key: pre-train only
-)
-print("Initializing model")
-model = TransactionModel(cfg).to(device)
 
-crit_cat  = nn.CrossEntropyLoss()
-crit_cont = nn.MSELoss()
-optim     = torch.optim.Adam(model.parameters(), lr=args.lr)
-vocab_sizes = [len(enc[f]["inv"]) for f in cat_features]
 print("Starting training loop")
 
 bar_fmt = (
@@ -156,64 +162,88 @@ bar_fmt = (
 )
 
 
-start_epoch = 0
-best_val    = float("inf")
-
 ckpt_path = (Path(args.data_dir) / "pretrained_backbone.pt")
-if args.resume:
-    best_val, start_epoch = load_ckpt(
-        path=ckpt_path,
-        device=device,
-        model=model,
-        optimizer=optim,
-        cat_features=cat_features,
-        cont_features=cont_features,
-    )
-else:
-    best_val, start_epoch = float("inf"), 0
 
+if args.resume:
+    model, best_val, start_epoch = load_ckpt(ckpt_path, device)
+else:
+
+    cfg = ModelConfig(
+        cat_vocab_sizes = {k: len(enc[k]["inv"]) for k in cat_features}, # dont take from args because preprocessing may change it
+        cont_features   = cont_features, # same as above
+        emb_dropout     = args.emb_dropout,
+        padding_idx     = 0,
+        total_epochs    = args.total_epochs,
+        window          = args.window,
+        stride          = args.stride,
+
+
+        ft_config = TransformerConfig(
+            d_model        = args.ft_d_model,         
+            n_heads        = args.ft_n_heads,  
+            depth          = args.ft_depth,   
+            ffn_mult       = args.ft_ffn_mult, 
+            dropout        = args.ft_dropout, 
+            layer_norm_eps = args.ft_layer_norm_eps,
+            norm_first     = args.ft_norm_first,
+        ),
+
+        seq_config = TransformerConfig(
+            d_model        = args.seq_d_model,
+            n_heads        = args.seq_n_heads,
+            depth          = args.seq_depth,
+            ffn_mult       = args.seq_ffn_mult,
+            dropout        = args.seq_dropout,
+            layer_norm_eps = args.seq_layer_norm_eps,
+            norm_first     = args.seq_norm_first,
+        ),
+
+        lstm_config = None,   # pre-train phase keeps this off
+    )
+    print("Initializing model")
+    model = TransactionModel(cfg).to(device)
+    crit_cat  = nn.CrossEntropyLoss()
+    crit_cont = nn.MSELoss()
+    optim     = torch.optim.Adam(model.parameters(), lr=args.lr)
+    vocab_sizes = list(cfg.cat_vocab_sizes.values())
+    start_epoch = 0
+    best_val  = float("inf")
+
+if start_epoch >= args.total_epochs:
+    raise IndexError("Start epoch from loaded model is greater than total epochs.")
+    
 # ─── wandb must know we’re resuming ───────────────────────────────────────
 run = wandb.init(
     project="txn-transformer",
     name   = f"pretrain-{Path(args.data_dir).stem}",
     config = vars(args),
-    resume = "allow" if args.resume else False,            # <-- key line
+    resume = "allow" if args.resume else False,    
 )
 
-wandb.watch(model, log="gradients", log_freq=100)
+wandb.watch(model, log="all", log_freq=100)
 
 # ─── Training loop ─────────────────────────────────────────────────────────
-best_val = float("inf")
 patience = 3 # number of acceptable consecutive epochs without validation loss improvement
 ep_without_improvement = 0
-# 1. Make sure 'User' is in the input
-sample = next(iter(train_loader))
-print("---------------------------------------------------------")
-print(sample["cat"][0, :, 0])       # first feature across the window
-# Should show the same user-ID repeated.
-
-# 2. Confirm class count
-print(train_df["User"].nunique())   # probably > 1 000
-
-# 3. Random baseline
-most_common = train_df["User"].value_counts().iloc[0] / len(train_df)
-print("Chance-level (always-pick-top):", most_common)
-print('------------------------------------------------------')
-
+# wandb.log({"batches_per_epoch": len(train_loader)})
 try:
-    for ep in range(start_epoch, args.epochs):
+    for ep in range(start_epoch, args.total_epochs):
         prog_bar = tqdm(
             train_loader,
-            desc=f"Epoch {ep+1}/{args.epochs}",
+            desc=f"Epoch {ep+1}/{args.total_epochs}",
             unit="batch",
             total=len(train_loader),
             bar_format=bar_fmt,
-            ncols=240,               # wider for readability (optional)
+            ncols=240,               # wider for readability 
             leave=False,             # clear at epoch end
         )
         
-        model.train(); tot_loss = 0; epoch_sample_count = 0; t0 = time.perf_counter()
+        model.train()
+        tot_loss = 0
+        epoch_sample_count = 0
+        t0 = time.perf_counter()
         batch_idx = 0
+
         for batch in prog_bar:
         
             cat_input, cont_inp, pad_mask, cat_tgt, cont_tgt = (t.to(device) for t in slice_batch(batch))
@@ -242,18 +272,24 @@ try:
                 "cont": f"{loss_cont.item():.4f}",
             })
         train_loss = tot_loss / epoch_sample_count
-        wandb.log({"train/loss": train_loss}, step=ep)
+        wandb.log({"training_loss": train_loss})
 
         val_loss, feat_acc = evaluate(model, val_loader, cat_features,
                                     {f: len(enc[f]["inv"]) for f in cat_features},
                                     crit_cat, crit_cont, device)
+        t1 = time.perf_counter()
+        time_elapsed = (t1 - t0) / 60
         wandb.log({
-        "val/loss":  val_loss,
-        **{f"val/acc_{k}": v for k, v in feat_acc.items()}
-        }, step=ep)
-        print(f"Epoch {ep+1:02}/{args.epochs} "
+        "validation_loss":  val_loss,
+        **{f"validation_accuracy_{k}": v for k, v in feat_acc.items()}
+        })
+        wandb.log({
+        "epoch_time_min": time_elapsed,
+        })
+        print(f"Epoch {ep+1:02}/{args.total_epochs} "
             f"| train {train_loss:.4f}  val {val_loss:.4f} "
-            f"| Δt {time.perf_counter()-t0:.1f}s")
+            f"| Time to complete epoch: {time_elapsed:2f} minutes")
+        
         if val_loss < best_val - 1e-5:  
             ep_without_improvement = 0
             print("New validation loss better than previous. Saving checkpoint.")             
@@ -264,7 +300,7 @@ try:
                 ckpt_path, cat_features, cont_features, cfg
             )
             wandb.run.summary["best_val_loss"] = best_val # type: ignore
-            print(f"New best ({best_val:.4f}) – checkpoint saved.")
+            print(f"New best ({best_val:.4f}), checkpoint saved.")
         else:
             if ep_without_improvement >= patience:
                 break
@@ -285,21 +321,31 @@ try:
                 cat_input, cat_tgt, preds_cat,
                 cont_tgt,  cont_pred,
                 enc, cat_features, cont_features,
-                n=3
+                n=1
             )
         batch_idx += 1
 
-                
-except KeyboardInterrupt:
-    graceful_exit()
-        
-finally:
-            
-    ckpt_path = Path(args.data_dir) / "pretrained_backbone.pt"
-    torch.save(model.state_dict(), ckpt_path)
 
-    artifact = wandb.Artifact("backbone", type="model")
-    artifact.add_file(str(ckpt_path))
-    wandb.log_artifact(artifact)
-    run.finish()   
-    print("Pre-training complete ✓  backbone saved.")
+                
+except RuntimeError as e:
+        # graceful handling of CUDA OOM
+        if "CUDA out of memory" in str(e):
+            run.alert(
+                title="CUDA OOM",
+                text=f"Run crashed at batch={args.batch_size}.  Marking failed.")
+            run.finish(exit_code=97)      # any non-zero exit marks failure
+            sys.exit(97)
+        else:
+            traceback.print_exc()
+            run.finish(exit_code=98)
+            sys.exit(98)
+
+finally:
+        ckpt_path = Path(args.data_dir) / "pretrained_backbone.pt"
+        # torch.save(model.state_dict(), ckpt_path)
+        if wandb.run is not None:
+            artifact = wandb.Artifact("backbone", type="model")
+            artifact.add_file(str(ckpt_path))
+            wandb.log_artifact(artifact)
+            run.finish()   
+        print("Pre-training complete.  Backbone saved.")
