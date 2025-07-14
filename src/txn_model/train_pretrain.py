@@ -144,13 +144,13 @@ def main():
     train_loader = DataLoader(
         TxnDataset(train_df, cat_features[0], cat_features, cont_features,
                 args.window, args.stride),
-        batch_size=args.batch_size, shuffle=True, collate_fn=collate_fn, num_workers=8)
+        batch_size=args.batch_size, shuffle=True, collate_fn=collate_fn, num_workers=4, pin_memory=True)
 
     print("Creating validation loader")
     val_loader   = DataLoader(
         TxnDataset(val_df, cat_features[0], cat_features, cont_features,
                 args.window, args.stride),
-        batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn, num_workers=8)
+        batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn, num_workers=4, pin_memory=True)
 
 
     print("Starting training loop")
@@ -349,17 +349,17 @@ def main():
                 run.finish(exit_code=98)
                 sys.exit(98)
 
-    finally:
-            ckpt_path = Path(args.data_dir) / "pretrained_backbone.pt"
-            if wandb.run is not None:
-                artifact = wandb.Artifact("backbone", type="model")
-                artifact.add_file(str(ckpt_path))
-                wandb.log_artifact(artifact)
-                run.finish()   
-            print("Pre-training complete.  Backbone saved.")
+    return args, run
 
 
 
 
 if __name__ == "__main__":
-    main()
+    args, run = main()
+    ckpt_path = Path(args.data_dir) / "pretrained_backbone.pt"
+    if wandb.run is not None:
+        artifact = wandb.Artifact("backbone", type="model")
+        artifact.add_file(str(ckpt_path))
+        wandb.log_artifact(artifact)
+        run.finish()   
+    print("Pre-training complete.  Backbone saved.")
