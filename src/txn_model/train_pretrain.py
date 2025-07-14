@@ -141,7 +141,7 @@ print("Creating training loader")
 train_loader = DataLoader(
     TxnDataset(train_df, cat_features[0], cat_features, cont_features,
                args.window, args.stride),
-    batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn)
+    batch_size=args.batch_size, shuffle=True, collate_fn=collate_fn)
 
 print("Creating validation loader")
 val_loader   = DataLoader(

@@ -199,6 +199,9 @@ txn_data_config.*
 *.feather
 *.pt
 *.csv
-
+/
 /src/txn_model/wandb/
+*wandb/
+
+wandb/sweep*
 
