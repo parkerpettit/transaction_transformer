@@ -141,13 +141,13 @@ print("Creating training loader")
 train_loader = DataLoader(
     TxnDataset(train_df, cat_features[0], cat_features, cont_features,
                args.window, args.stride),
-    batch_size=args.batch_size, shuffle=True, collate_fn=collate_fn)
+    batch_size=args.batch_size, shuffle=True, collate_fn=collate_fn, num_workers=8)
 
 print("Creating validation loader")
 val_loader   = DataLoader(
     TxnDataset(val_df, cat_features[0], cat_features, cont_features,
                args.window, args.stride),
-    batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn)
+    batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn, num_workers=8)
 
 
 print("Starting training loop")
@@ -165,7 +165,9 @@ bar_fmt = (
 ckpt_path = (Path(args.data_dir) / "pretrained_backbone.pt")
 
 if args.resume:
-    model, best_val, start_epoch = load_ckpt(ckpt_path, device)
+    model, best_val, start_epoch = load_ckpt(ckpt_path)
+    model.to(device)
+    cfg = model.cfg
 else:
 
     cfg = ModelConfig(
@@ -202,13 +204,16 @@ else:
     )
     print("Initializing model")
     model = TransactionModel(cfg).to(device)
-    crit_cat  = nn.CrossEntropyLoss()
-    crit_cont = nn.MSELoss()
-    optim     = torch.optim.Adam(model.parameters(), lr=args.lr)
-    vocab_sizes = list(cfg.cat_vocab_sizes.values())
+
+    
     start_epoch = 0
     best_val  = float("inf")
 
+    
+vocab_sizes = list(cfg.cat_vocab_sizes.values())
+crit_cat  = nn.CrossEntropyLoss()
+crit_cont = nn.MSELoss()
+optim     = torch.optim.Adam(model.parameters(), lr=args.lr)
 if start_epoch >= args.total_epochs:
     raise IndexError("Start epoch from loaded model is greater than total epochs.")
     

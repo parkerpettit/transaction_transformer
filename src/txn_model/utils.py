@@ -64,7 +64,6 @@ def save_ckpt(
 # ──────────────────────────────────────────────────────────────────────────────
 def load_ckpt(
     path: str | Path,
-    device: torch.device,
 ) -> Tuple[nn.Module, float, int]:
     """
     Returns
@@ -80,7 +79,7 @@ def load_ckpt(
     if not path.exists():
         raise FileNotFoundError(f"Told model to resume training from a checkpoint, but no checkpoint exists at the given directory: {path}")
 
-    ckpt = torch.load(path, map_location=device, weights_only=False)
+    ckpt = torch.load(path, weights_only=False)
     model = TransactionModel(ckpt["config"])
     model.load_state_dict(ckpt["model_state"])
 
