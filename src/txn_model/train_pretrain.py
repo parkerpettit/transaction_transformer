@@ -144,13 +144,13 @@ def main():
     train_loader = DataLoader(
         TxnDataset(train_df, cat_features[0], cat_features, cont_features,
                 args.window, args.stride),
-        batch_size=args.batch_size, shuffle=True, collate_fn=collate_fn, num_workers=4, pin_memory=True)
+        batch_size=args.batch_size, shuffle=True, collate_fn=collate_fn, num_workers=0, pin_memory=True)
 
     print("Creating validation loader")
     val_loader   = DataLoader(
         TxnDataset(val_df, cat_features[0], cat_features, cont_features,
                 args.window, args.stride),
-        batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn, num_workers=4, pin_memory=True)
+        batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn, num_workers=0, pin_memory=True)
 
 
     print("Starting training loop")
