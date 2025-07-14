@@ -3,7 +3,7 @@ data_dir: data         # Root directory of raw or processed data
 
 # ───────────── training loop hyper-parameters ────────────────────────────────
 total_epochs: 10      # Number of training epochs
-batch_size:   768     # Batch size for training
+batch_size:   384     # Batch size for training
 lr:        2.19e-4   # Initial learning rate
 window:       10       # Sequence length (transactions per sample)
 stride:       5       # Stride length between windows
