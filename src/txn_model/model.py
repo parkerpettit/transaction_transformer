@@ -358,6 +358,9 @@ class TransactionModel(nn.Module):
                                       sum(cfg.cat_vocab_sizes.values()))
         self.ar_cont_head = nn.Linear(cfg.seq_config.d_model, len(cfg.cont_features))
 
+
+
+
     # --------------------------------------------------------------------- #
     def forward(
         self,
@@ -390,6 +393,8 @@ class TransactionModel(nn.Module):
             hidden = seq[torch.arange(B, device=seq.device), idx]  # (B, M or H)
             z = self.ar_dropout(hidden)
             return self.ar_cat_head(z), self.ar_cont_head(z)
-
+        
+        elif mode == "lightgbm":
+            return seq[:, -1, :] # shape (B, M)
         else:
             raise ValueError("mode must be 'fraud' or 'ar'")

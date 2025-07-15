@@ -205,3 +205,6 @@ txn_data_config.*
 
 wandb/sweep*
 
+*bin
+*npy
+*.txt

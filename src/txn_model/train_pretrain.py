@@ -213,7 +213,7 @@ def main():
         best_val  = float("inf")
 
         
-    vocab_sizes = list(cfg.cat_vocab_sizes.values())
+    vocab_sizes = list(cfg.cat_vocab_sizes.values()) # type: ignore
     crit_cat  = nn.CrossEntropyLoss()
     crit_cont = nn.MSELoss()
     optim     = torch.optim.Adam(model.parameters(), lr=args.lr)
@@ -305,7 +305,7 @@ def main():
                 ckpt_path = Path(args.data_dir) / "pretrained_backbone.pt"
                 save_ckpt(                               
                     model, optim, ep, best_val,
-                    ckpt_path, cat_features, cont_features, cfg
+                    ckpt_path, cat_features, cont_features, cfg # type: ignore
                 )
                 wandb.run.summary["best_val_loss"] = best_val # type: ignore
                 print(f"New best ({best_val:.4f}), checkpoint saved.")
