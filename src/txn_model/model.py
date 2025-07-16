@@ -92,7 +92,7 @@ class EmbeddingLayer(nn.Module):
             Shape (B·L, K, D) where K = #categorical + #continuous fields.
         """
         B, L, _ = cat.shape
-
+        
         # categorical → (B, L, D) for each field
         cat_embs = [
             self.dropout(layer(cat[:, :, i]))
@@ -159,11 +159,11 @@ class FieldTransformer(nn.Module):
         """
         n_rows = x.size(0)
 
-        # Fast path – fits in one kernel launch
+        # Fast path - fits in one kernel launch
         if n_rows <= self._MAX_ROWS:
             return self.encoder(x)
 
-        # Chunked path – split along the row dimension
+        # Chunked path - split along the row dimension
         out_chunks = []
         for chunk in x.split(self._MAX_ROWS, dim=0):   # view; zero-copy
             out_chunks.append(self.encoder(chunk))
@@ -226,7 +226,7 @@ class SinCosPositionalEncoding(nn.Module):
         if L > self.pe.size(1): # type: ignore
             raise ValueError(f"Sequence length {L} exceeds max_len={self.pe.size(1)}") # type: ignore
 
-        # self.pe is (1, max_len, D) – slice to length and broadcast over batch
+        # self.pe is (1, max_len, D) - slice to length and broadcast over batch
         return x + self.pe[:, :L] # type: ignore
 
 
@@ -272,6 +272,8 @@ class LSTMHead(nn.Module):
     def __init__(self, cfg: LSTMConfig, input_size: int):
         super().__init__()
 
+
+
         self.lstm = nn.LSTM(
             input_size=input_size,
             hidden_size=cfg.hidden_size,
@@ -282,7 +284,7 @@ class LSTMHead(nn.Module):
 
         self.dropout = nn.Dropout(cfg.dropout)
 
-        self.fc = nn.Linear(cfg.hidden_size, cfg.num_classes)
+        self.fc = nn.Linear(cfg.hidden_size, 1)
 
     def forward(self, seq_out: Tensor, lengths: Tensor) -> Tensor:
         """
@@ -291,7 +293,7 @@ class LSTMHead(nn.Module):
         seq_out : Tensor
             Shape (B, L, M) - output from the sequence transformer.
         lengths : Tensor
-            Shape (B,) - number of unpadded tokens per sequence (i.e., (~pad_mask).sum(1))
+            Shape (B,) 
 
         Returns
         -------
@@ -300,15 +302,9 @@ class LSTMHead(nn.Module):
         """
 
         # If all sequences are same length, we can skip packing for efficiency
-        if torch.all(lengths == lengths[0]):
-            _, (h_n, _) = self.lstm(seq_out)
-        else:
-            packed = pack_padded_sequence(seq_out, lengths.cpu(), batch_first=True, enforce_sorted=False)
-            _, (h_n, _) = self.lstm(packed)
-
-        last_hidden = h_n[-1]  # (B, hidden_size)
-        last_hidden = self.dropout(last_hidden)
-        return self.fc(last_hidden)  # (B, num_classes)
+        embeddings, _ = self.lstm(seq_out)
+        last_embedding = embeddings[:, -1, :] # (B, hidden_size)
+        return self.fc(last_embedding).squeeze(dim=1)  # (B)
 
 
 # -------------------------------------------------------------------------------------- #
@@ -386,7 +382,8 @@ class TransactionModel(nn.Module):
         if mode == "fraud":
             if self.lstm_head is None:
                 raise RuntimeError("Fraud head not present (pre-train config).")
-            return self.lstm_head(seq, lengths)   # (B, 1)
+            
+            return self.lstm_head(seq, lengths)   # (B)
 
         elif mode == "ar":
             idx = lengths - 1                     # last valid time-step per batch

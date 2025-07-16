@@ -74,7 +74,8 @@ def load_ckpt(
     start_epoch : int
         Epoch index to continue with (0-based). 0 means train from scratch.
     """
-    path = Path(path)
+    if type(path) == str:
+        path = Path(path)
 
     if not path.exists():
         raise FileNotFoundError(f"Told model to resume training from a checkpoint, but no checkpoint exists at the given directory: {path}")

@@ -128,18 +128,20 @@ def main():
 
 
     # ─── Data (load cache or create) ───────────────────────────────────────────
-    cache = Path(args.data_dir) / "processed_data.pt"
+
+    cache = Path(args.data_dir) / "legit_data_only.pt"
     if cache.exists():
         print("Processed data exists, loading now.")
         train_df, val_df, test_df, enc, cat_features, cont_features, scaler = torch.load(cache,  weights_only=False)
         print("Processed data loaded.")
     else:
-        print("Preprocessed data not found. Processing now.")
-        raw = Path(args.data_dir) / "card_transaction.v1.csv"
-        train_df, val_df, test_df, enc, cat_features, cont_features, scaler = preprocess(raw, args.cat_features, args.cont_features)
-        print("Finished processing data. Now saving.")
-        torch.save((train_df, val_df, test_df, enc, cat_features, cont_features, scaler), cache)
-        print("Processed data saved.")
+        print("Processed data file doesn't exist, run preprocessing.py.")
+        # print("Preprocessed data not found. Processing now.")
+        # raw = Path(args.data_dir) / "card_transaction.v1.csv"
+        # train_df, val_df, test_df, enc, cat_features, cont_features, scaler = preprocess(raw, args.cat_features, args.cont_features)
+        # print("Finished processing data. Now saving.")
+        # torch.save((train_df, val_df, test_df, enc, cat_features, cont_features, scaler), cache)
+        # print("Processed data saved.")
     print("Creating training loader")
     train_loader = DataLoader(
         TxnDataset(train_df, cat_features[0], cat_features, cont_features,
@@ -165,7 +167,7 @@ def main():
     )
 
 
-    ckpt_path = (Path(args.data_dir) / "pretrained_backbone.pt")
+    ckpt_path = (Path(args.data_dir) / "legit_backbone.pt")
 
     if args.resume:
         model, best_val, start_epoch = load_ckpt(ckpt_path)
@@ -264,8 +266,9 @@ def main():
                     loss_cat += crit_cat(cat_logits[:, start:start+vocab_len], cat_tgt[:, i])
                     start += vocab_len
                 loss_cont = crit_cont(cont_pred, cont_tgt)
-                loss_cat /= len(vocab_sizes)
-                loss = loss_cat + loss_cont
+                # loss_cat /= len(vocab_sizes) # average cat loss across number of categories
+                # only one continuous feature, give each head equal weight
+                loss = (loss_cat + loss_cont) / (len(vocab_sizes) + 1 )
 
                 optim.zero_grad()
                 loss.backward()
@@ -302,7 +305,7 @@ def main():
                 ep_without_improvement = 0
                 print("New validation loss better than previous. Saving checkpoint.")             
                 best_val = val_loss                       
-                ckpt_path = Path(args.data_dir) / "pretrained_backbone.pt"
+                ckpt_path = Path(args.data_dir) / "legit_backbone.pt"
                 save_ckpt(                               
                     model, optim, ep, best_val,
                     ckpt_path, cat_features, cont_features, cfg # type: ignore
@@ -357,9 +360,9 @@ def main():
 if __name__ == "__main__":
     torch.multiprocessing.set_start_method("spawn", force=True)
     args, run = main()
-    ckpt_path = Path(args.data_dir) / "pretrained_backbone.pt"
+    ckpt_path = Path(args.data_dir) / "legit_backbone.pt"
     if wandb.run is not None:
-        artifact = wandb.Artifact("backbone", type="model")
+        artifact = wandb.Artifact("legit_backbone", type="model")
         artifact.add_file(str(ckpt_path))
         wandb.log_artifact(artifact)
         run.finish()   

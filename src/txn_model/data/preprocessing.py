@@ -7,53 +7,73 @@ from sklearn.preprocessing import StandardScaler
 import torch
 from torch.utils.data import Dataset
 import torch.nn.functional as F
+from pathlib import Path
 
-logger = logging.getLogger(__name__)
+
+
+def get_encoders(df, cat_features):
+    # Get encoder from entire dataset  
+    encoders: Dict[str, Dict[str, Any]] = {}
+    for c in cat_features:
+        df[c] = df[c].astype("category")
+        cats = df[c].cat.categories
+        mapping   = {tok: idx + 2 for idx, tok in enumerate(cats)}   # +2 reserve 0,1
+        inv_array = np.array(["__PAD__", "__UNK__", *cats], dtype=object)
+        encoders[c] = {"map": mapping, "inv": inv_array}
+    return encoders
+
+
+def encode_df(df, encoders, cat_features):
+    # using encoder, map all categorical values to their integer ID
+    for c in cat_features:
+        mapping = encoders[c]["map"]
+        codes = (
+            df[c]
+            .astype("object")          # <— ensure *not* categorical
+            .map(mapping)              # str  → float (with NaN)
+            .fillna(1)                 # NaN → __UNK__ code
+            .astype(np.int32)          # float → int
+        )
+        df[c] = codes            # now plain int column
+    return df
+
+def get_scaler(df: pd.DataFrame, cont_features: List[str] = ["Amount"]):
+    return StandardScaler().fit(df[cont_features].to_numpy())
+
+def normalize(df: pd.DataFrame, scaler: StandardScaler, cont_features: List[str] = ["Amount"]):
+    df[cont_features] = scaler.transform(df[cont_features]).astype(np.float32)
+    return df
+
 
 def preprocess(
     file: pathlib.Path,
-    cat_features: List[str],
-    cont_features: List[str],
+    cont_features: List[str] = ["Amount"],
     group_key: str = "User",
-    time_col: str = "Time",
     train_frac: float = 0.70,
     val_frac: float = 0.15,
-    seed: int = 42,
 ) -> Tuple[
     pd.DataFrame,
     pd.DataFrame,
     pd.DataFrame,
-    Dict[str, Dict[str, np.ndarray]],
-    List[str],
-    List[str],
-    StandardScaler,
 ]:
     """Efficient vectorized preprocessing for transaction data."""
     # 1) Read only needed columns
     df = pd.read_csv(file)
-    # # REMOVE LATER, JUST FOR TESTING FASTEST BATCH FOR MY GPU
-    # def sample_n_users(df):
-    #     rng     = np.random.default_rng(42)
-    #     users   = df["User"].unique()
-    #     keepers = rng.choice(users, size=50, replace=False)
-    #     return df[df["User"].isin(keepers)].copy()
-    # df = sample_n_users(df)
-
-    # # usage
-
-   
-
 
     # 2) Generate binary fraud flag
     df["is_fraud"] = df["Is Fraud?"].str.lower().map({"yes": 1, "no": 0}).astype(np.int8)
     df.drop(columns=["Is Fraud?"], inplace=True)
-
+    # GET ONLY LEGIT TRANSACTIONS FOR PRETRAINING
+    # df = df[df["is_fraud"] == 0]
     # 3) Parse time, extract hour, drop minutes
-    df[time_col] = pd.to_datetime(df[time_col], format="%H:%M", errors="coerce")
-    df["Hour"] = df[time_col].dt.hour.astype("category")
-    df.drop(columns=[time_col], inplace=True)
+    df["Time"] = pd.to_datetime(df["Time"], format="%H:%M", errors="coerce")
+    df["Hour"] = df["Time"].dt.hour.astype("category")
+    df.drop(columns=["Time"], inplace=True)
 
-    # 4) Downcast continuous features
+    df["Errors?"] = df["Errors?"].fillna("No Error")
+    df["Zip"] = df["Zip"].fillna("Online")
+
+    # strip dollar sign from amounts
     for c in cont_features:
         if df[c].dtype == object:
             df[c] = (
@@ -64,7 +84,7 @@ def preprocess(
         else:
             df[c] = pd.to_numeric(df[c], downcast="float")
 
-    # 5) Sort chronologically
+    # Sort chronologically
     df.sort_values(
         by=[group_key, "Year", "Month", "Day", "Hour"],
         ascending=True,
@@ -85,40 +105,59 @@ def preprocess(
         d = df[df["split"] == name].copy()
         return d.drop(columns=drop_cols).reset_index(drop=True)
 
+
     train_df = subset("train")
     val_df   = subset("val")
     test_df  = subset("test")
     del df  # free RAM
+    return train_df, val_df, test_df
 
-    # 8) Encode categoricals ----------------------------------------------------
-    cat_features = [c for c in cat_features if c in train_df.columns]    
-    encoders: Dict[str, Dict[str, Any]] = {}
-    for c in cat_features:
-        # fit encoder on *train* only
-        train_df[c] = train_df[c].astype("category")
-        cats = train_df[c].cat.categories
-        mapping   = {tok: idx + 2 for idx, tok in enumerate(cats)}   # +2 reserve 0,1
-        inv_array = np.array(["__PAD__", "__UNK__", *cats], dtype=object)
-        encoders[c] = {"map": mapping, "inv": inv_array}
+cat_features = [
+    "User",
+    "Card",
+    "Use Chip",
+    "Merchant Name",
+    "Merchant City",
+    "Merchant State",
+    "Zip",
+    "MCC",
+    "Errors?",
+    "Year",
+    "Month",
+    "Day",
+    "Hour",
+]
 
-        # apply mapping to every split
-        for split_df in (train_df, val_df, test_df):
-            codes = (
-                split_df[c]
-                .astype("object")          # <— ensure *not* categorical
-                .map(mapping)              # str  → float (with NaN)
-                .fillna(1)                 # NaN → __UNK__ code
-                .astype(np.int32)          # float → int
-            )
-            split_df[c] = codes            # now plain int column
+cont_features = ["Amount"]
+
+print("Preprocessing starting")
+full_train_df, full_val_df, full_test_df = preprocess(Path("card_transaction.v1.csv"))
+print("Preprocessing done")
+print("Getting scaler")
+
+scaler = get_scaler(full_train_df)
+# get encoders from entire dataset
+print("Getting encoders")
+
+encoders = get_encoders(pd.concat((full_train_df, full_val_df, full_test_df), axis=0), cat_features=cat_features)
+    # df = df[df["is_fraud"] == 0]
+
+print("Applying encoders and scalers to dfs")
+
+full_train_df, full_val_df, full_test_df = [
+    normalize(encode_df(df.copy(), encoders, cat_features), scaler, cont_features)
+    for df in (full_train_df, full_val_df, full_test_df)
+]
+print("Removing fraud examples from legit dfs")
+legit_train, legit_val, legit_test = [
+    df[df["is_fraud"] == 0]
+    for df in (full_train_df, full_val_df, full_test_df)
+]
+
+print("Saving")
+import torch
+torch.save((full_train_df, full_val_df, full_test_df, encoders, cat_features, cont_features, scaler), "full_processed.pt")
+torch.save((legit_train, legit_val, legit_test, encoders, cat_features, cont_features, scaler), "legit_processed.pt")
 
 
-    # 9) Scale continuous and downcast
-    cont_features = list(cont_features)
-    scaler = StandardScaler().fit(train_df[cont_features].to_numpy())
-    for df_ in (train_df, val_df, test_df):
-        arr = scaler.transform(df_[cont_features])
-        df_[cont_features] = arr.astype(np.float32)
-
-    return train_df, val_df, test_df, encoders, cat_features, cont_features, scaler
 

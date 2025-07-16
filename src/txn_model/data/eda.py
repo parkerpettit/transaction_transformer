@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
-"""better_eda_full.py – v4  (all‑rows version)
-Generates an exhaustive, single‑file interactive HTML report for the **24‑million‑row**
-card‑transaction dataset *without* sub‑sampling.
+"""better_eda_full.py - v4  (all-rows version)
+Generates an exhaustive, single-file interactive HTML report for the **24-million-row**
+card-transaction dataset *without* sub-sampling.
 
 Main additions v3 → v4
 ---------------------
-* **No sampling anywhere** – every analytic step runs on the full DataFrame.
+* **No sampling anywhere** - every analytic step runs on the full DataFrame.
 * **Datashader density plot** for Amount vs fraud flag (falls back to seaborn if
   Datashader not installed).
-* **Mutual‑information** computed *feature‑by‑feature* (constant memory).
-* **LightGBM baseline** (GOSS) on the *entire* dataset with ROC‑AUC, PR‑AUC,
-  precision, recall, F1, and confusion‑matrix heat‑map.
-* **Correlation matrix heat‑map** for numeric columns (instead of PCA).
-* ZIP‑scatter now includes **every ZIP code** (WebGL scatter).
+* **Mutual-information** computed *feature-by-feature* (constant memory).
+* **LightGBM baseline** (GOSS) on the *entire* dataset with ROC-AUC, PR-AUC,
+  precision, recall, F1, and confusion-matrix heat-map.
+* **Correlation matrix heat-map** for numeric columns (instead of PCA).
+* ZIP-scatter now includes **every ZIP code** (WebGL scatter).
 
-Requires: pandas, numpy, matplotlib, seaborn, plotly, pgeocode, ydata‑profiling,
-scikit‑learn, lightgbm, tqdm, (optional) datashader.
+Requires: pandas, numpy, matplotlib, seaborn, plotly, pgeocode, ydata-profiling,
+scikit-learn, lightgbm, tqdm, (optional) datashader.
 
 Run:
     python better_eda_full.py --csv card_transaction.v1.csv --out eda_full.html
@@ -80,7 +80,7 @@ def img_tag(fig, caption: str | None = None) -> str:
 # --------------------------- cleaning ---------------------------------------
 
 def clean_dataframe(df: pd.DataFrame) -> None:
-    """In‑place cleaning and type optimisation."""
+    """In-place cleaning and type optimisation."""
     # Time → Hour (int8)
     df["Hour"] = df["Time"].str.split(":").str[0].astype("int8")
     df.drop(columns=["Time"], inplace=True)
@@ -112,7 +112,7 @@ def clean_dataframe(df: pd.DataFrame) -> None:
 # ---------------- baseline / lift ------------------------------------------
 
 def majority_guess(df: pd.DataFrame, cols: List[str]) -> pd.DataFrame:
-    """Majority‑class baseline table."""
+    """Majority-class baseline table."""
     out = []
     for c in cols:
         vc = df[c].value_counts(normalize=True, dropna=False)
@@ -126,7 +126,7 @@ def fraud_lift(df: pd.DataFrame, col: str, n: int = 20) -> pd.DataFrame:
     base = df["Is Fraud?"].mean()
     lift = (df.groupby(col)["Is Fraud?"].mean()
             .sort_values(ascending=False)
-            .head(n)               # keep top‑n for readability
+            .head(n)               # keep top-n for readability
             .to_frame("fraud_rate"))
     lift["lift"] = lift["fraud_rate"] / base
     lift["samples"] = df[col].value_counts().reindex(lift.index)
@@ -135,7 +135,7 @@ def fraud_lift(df: pd.DataFrame, col: str, n: int = 20) -> pd.DataFrame:
 # ---------------- plotting snippets ----------------------------------------
 def amount_plot(df: pd.DataFrame) -> str:
     """
-    Amount density – Datashader categorical overlay (full data) or seaborn fallback.
+    Amount density - Datashader categorical overlay (full data) or seaborn fallback.
     Blue = legit, red = fraud.
     """
     if DATASHADER:
@@ -209,7 +209,7 @@ def zip_map(df: pd.DataFrame, metric: pd.Series, title: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# 2)   sliding_window – keep keyword args; format with .map (no applymap)
+# 2)   sliding_window - keep keyword args; format with .map (no applymap)
 # ---------------------------------------------------------------------------
 def sliding_window(group_sizes: pd.Series) -> pd.DataFrame:
     windows  = [5, 10, 20, 50, 100, 200, 500, 1000]
@@ -286,7 +286,7 @@ def pairwise_heat(df: pd.DataFrame, a: str, b: str) -> str:
     tbl = pd.crosstab(df[a], df[b], values=df["Is Fraud?"], aggfunc="mean").fillna(0)
     fig = plt.figure(figsize=(8, 6))
     sns.heatmap(tbl, cmap="Reds")
-    plt.title(f"Fraud % – {a} × {b}")
+    plt.title(f"Fraud % - {a} x {b}")
     return img_tag(fig)
 
 
@@ -295,7 +295,7 @@ def temporal_lines(df: pd.DataFrame) -> str:
     fig, ax = plt.subplots()
     by_month.plot(ax=ax)
     ax.set_ylabel("Fraud rate")
-    ax.set_title("Fraud % over time (Year‑Month)")
+    ax.set_title("Fraud % over time (Year-Month)")
     return img_tag(fig)
 
 
@@ -303,7 +303,7 @@ def hour_dow_heat(df: pd.DataFrame) -> str:
     tbl = pd.pivot_table(df, index="Hour", columns="DOW", values="Is Fraud?", aggfunc="mean")
     fig = plt.figure(figsize=(6, 6))
     sns.heatmap(tbl, cmap="Reds")
-    plt.title("Fraud % by Hour × DOW")
+    plt.title("Fraud % by Hour x DOW")
     return img_tag(fig)
 
 
@@ -312,7 +312,7 @@ def seq_len_hist(df: pd.DataFrame) -> str:
     fig, ax = plt.subplots()
     lengths.plot.hist(bins=50, log=True, ax=ax)
     ax.set_xlabel("# Transactions per user")
-    ax.set_title("User history length (log‑y)")
+    ax.set_title("User history length (log-y)")
     return img_tag(fig)
 
 
@@ -331,7 +331,7 @@ def corr_heatmap(df: pd.DataFrame, num_cols: List[str]) -> str:
     corr = df[num_cols].corr()
     fig, ax = plt.subplots(figsize=(6, 5))
     sns.heatmap(corr, cmap="vlag", center=0, annot=False)
-    ax.set_title("Correlation matrix – numeric features")
+    ax.set_title("Correlation matrix - numeric features")
     return img_tag(fig)
 
 
@@ -339,7 +339,7 @@ def corr_heatmap(df: pd.DataFrame, num_cols: List[str]) -> str:
 
 def lgbm_baseline(df: pd.DataFrame, cat_cols: List[str], num_cols: List[str]):
     X = df[cat_cols + num_cols].copy()
-    # integer‑encode categoricals for LightGBM
+    # integer-encode categoricals for LightGBM
     for c in cat_cols:
         X[c] = X[c].cat.codes  # -1 for NaN
     y = df["Is Fraud?"].astype(int)
@@ -369,7 +369,7 @@ def lgbm_baseline(df: pd.DataFrame, cat_cols: List[str], num_cols: List[str]):
     fig, ax = plt.subplots(); ax.plot(rec_curve, pre); ax.set_title(f"PR AUC {pr:.3f}")
     pr_img = img_tag(fig)
 
-    # confusion matrix heat‑map
+    # confusion matrix heat-map
     cm = confusion_matrix(y, preds)
     fig, ax = plt.subplots();
     sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", ax=ax)
@@ -416,7 +416,7 @@ def main(argv: Optional[List[str]] = None):
     }
 
     # ---------------- profiling -----------------------------------------
-    print("⚡ Running ydata‑profiling on full dataset … (grab coffee)")
+    print("⚡ Running ydata-profiling on full dataset … (grab coffee)")
     prof_html = ProfileReport(df, title="Profile (full)", progress_bar=False, tsmode=False).to_html()
 
     body: List[str] = []
@@ -426,18 +426,18 @@ def main(argv: Optional[List[str]] = None):
         f"<li><b>{k}</b>: {v}</li>" for k, v in basics.items()) + "</ul>")
 
     # majority baseline
-    body.append("<details open><summary>Majority‑class baseline</summary>" +
+    body.append("<details open><summary>Majority-class baseline</summary>" +
                 majority_guess(df, cat_cols).to_html(index=False, border=1,
                 formatters={"most_freq_rate": "{:.2%}".format}) + "</details>")
 
     # fraud lift singles
     for c in ["Use Chip", "Hour", "Merchant State", "MCC"]:
-        body.append(f"<details><summary>Fraud lift – {c}</summary>" +
+        body.append(f"<details><summary>Fraud lift - {c}</summary>" +
                     fraud_lift(df, c).to_html(border=1,
                     formatters={"fraud_rate": "{:.2%}".format, "lift": "{:.2f}".format}) + "</details>")
 
     # pairwise heat map example
-    body.append("<details><summary>Fraud % – Use Chip × Hour</summary>" +
+    body.append("<details><summary>Fraud % - Use Chip x Hour</summary>" +
                 pairwise_heat(df, "Use Chip", "Hour") + "</details>")
 
     # amount density
@@ -459,7 +459,7 @@ def main(argv: Optional[List[str]] = None):
 
     # sliding windows
     sw_tbl = sliding_window(df.groupby("User").size())
-    body.append("<details><summary>Sliding‑window counts</summary>" +
+    body.append("<details><summary>Sliding-window counts</summary>" +
                 sw_tbl.to_html(border=1, col_space=90, justify="right", classes="sw-table") + "</details>")
 
     # mutual info
@@ -499,7 +499,7 @@ def main(argv: Optional[List[str]] = None):
                 lgbm_baseline(df, cat_cols, num_cols) + "</details>")
 
     # ---------------- assemble & write ----------------------------------
-    html_out = HTML_TEMPLATE.format(title="Card‑Transaction EDA (Full)",
+    html_out = HTML_TEMPLATE.format(title="Card-Transaction EDA (Full)",
                                     body=prof_html + "\n" + "\n".join(body))
     args.out.write_text(html_out, encoding="utf-8")
     print(f"✅ Report written to {args.out}")

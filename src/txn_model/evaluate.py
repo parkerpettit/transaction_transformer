@@ -42,7 +42,7 @@ def evaluate(
     avg_loss : float
         Mean loss (categorical + continuous) over all samples.
     feat_acc : dict[str, float]
-        Accuracy per categorical feature (0–1 range).
+        Accuracy per categorical feature (0-1 range).
     """
     model.eval()
 
@@ -104,11 +104,11 @@ def evaluate(
 """
 evaluate_binary.py
 ------------------
-Validation helper for the fraud‑classification fine‑tuning phase.
+Validation helper for the fraud-classification fine-tuning phase.
 Returns loss plus a rich metrics dict and takes care of W&B logging:
   • overall accuracy, precision, recall, F1
-  • ROC‑AUC, PR‑AUC
-  • class‑wise accuracy
+  • ROC-AUC, PR-AUC
+  • class-wise accuracy
   • confusion matrix, ROC curve, PR curve as interactive W&B plots
 """
 
@@ -161,7 +161,7 @@ def evaluate_binary(
     all_preds:  List[int]   = []
     all_labels: List[int]   = []
 
-    # Track per‑class accuracy (0 / 1)
+    # Track per-class accuracy (0 / 1)
     cls_correct: Dict[float, int] = {0: 0, 1: 0}
     cls_total:   Dict[float, int] = {0: 0, 1: 0}
     
@@ -194,7 +194,7 @@ def evaluate_binary(
 
         preds = (probs > 0.5).float()
 
-        # Book‑keeping
+        # Book-keeping
         batch_size = y.size(0)
         tot_loss   += loss.item() * batch_size
         tot_samples += batch_size
