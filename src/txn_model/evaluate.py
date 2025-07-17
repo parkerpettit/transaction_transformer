@@ -53,12 +53,11 @@ def evaluate(
     sizes = [vocab_sizes[f] for f in cat_features]   # lens in the same order
     for batch in loader:
         # slice_batch = the helper you already have
-        inp_cat, inp_cont, inp_mask, tgt_cat, tgt_cont = slice_batch(batch)
+        inp_cat, inp_cont, tgt_cat, tgt_cont, _ = slice_batch(batch)
         inp_cat, inp_cont = inp_cat.to(device), inp_cont.to(device)
-        inp_mask          = inp_mask.to(device).bool()
         tgt_cat, tgt_cont = tgt_cat.to(device), tgt_cont.to(device)
 
-        logits_cat, pred_cont = model(inp_cat, inp_cont, inp_mask, mode="ar")
+        logits_cat, pred_cont = model(inp_cat, inp_cont, mode="ar")
 
         # ----- compute loss & per-feature accuracy -----
         start, loss_cat = 0, 0.0
@@ -72,9 +71,10 @@ def evaluate(
             feat_correct[i] += (preds_f == targets_f).sum().item()
             feat_total[i]   += targets_f.numel()
             start = end
-        loss_cat /= len(vocab_sizes)
+
         loss_cont = crit_cont(pred_cont, tgt_cont)
-        loss = loss_cat + loss_cont 
+        loss = (loss_cat + loss_cont) / (len(vocab_sizes) + 1 )
+
         
         batch_size   = inp_cat.size(0)
         total_loss    += loss.item() * batch_size
@@ -124,115 +124,118 @@ from sklearn.metrics import (
 )
 import wandb
 
+from sklearn.metrics import confusion_matrix
+import pandas as pd
+import numpy as np
+def evaluate_recall_at_fprs(y_true, y_pred_proba, fpr_thresholds, granularity = 2):
+  results = []
+  for fpr_threshold in fpr_thresholds:
+    best_recall = 0
+    best_threshold = 0
+    #for binary search
+    bot = 0
+    top = 1
+    while abs(top-bot) >= 10*.1**granularity:
+      threshold = round(((top+bot)/2), granularity)
+      y_pred = (y_pred_proba >= threshold).astype(int)
+      tn, fp, fn, tp = confusion_matrix(y_true, y_pred, labels = [0,1]).ravel()
+      recall = tp/(tp+fn) if (tp+fn) != 0 else 0
+      fpr = fp/(fp+tn) if (fp+tn) != 0 else 0
+      if fpr < fpr_threshold and recall > best_recall:
+        best_recall = recall
+        best_threshold = threshold
+      
+      if fpr >= fpr_threshold:
+        bot = threshold
+      else:
+        top = threshold
+    
+    results.append({
+        'threshold': best_threshold,
+        'best_recall': best_recall,
+        'fpr_limit': fpr_threshold
+    })
+  return pd.DataFrame(results)
+from typing import List, Dict, Tuple
+import torch
+import numpy as np
+import matplotlib.pyplot as plt
+import wandb
+from sklearn.metrics import (
+    confusion_matrix,
+    precision_recall_fscore_support,
+    roc_auc_score,
+    average_precision_score,
+    ConfusionMatrixDisplay
+)
 
 @torch.no_grad()
 def evaluate_binary(
-    model: nn.Module,
+    model: torch.nn.Module,
     loader: torch.utils.data.DataLoader,
-    criterion: nn.Module,
+    criterion: torch.nn.BCEWithLogitsLoss,
     device: torch.device,
     threshold: float = 0.5,
     class_names: List[str] | None = None,
 ) -> Tuple[float, Dict[str, float]]:
-    """Run evaluation and log metrics to Weights & Biases.
-
-    Parameters
-    ----------
-    model      : ``TransactionModel`` already switched to ``mode="fraud"``
-    loader     : validation ``DataLoader``
-    criterion  : ``nn.BCEWithLogitsLoss`` (preferred) *or* ``nn.CrossEntropyLoss``
-    device     : CUDA / CPU device handle
-    threshold  : Probability cut-off for turning scores into 0/1 labels (default 0.5)
-    class_names: Optional list like ``["non-fraud", "fraud"]``
-
-    Returns
-    -------
-    val_loss : float - mean loss over the loader
-    metrics  : Dict[str, float] - keys include ``acc, precision, recall, f1, roc_auc, pr_auc``
     """
-
+    Evaluate a binary (fraud vs non-fraud) model using BCEWithLogitsLoss.
+    Logs scalar metrics, ROC/PR curves, and confusion matrices at various FPR thresholds.
+    """
     model.eval()
+    tot_loss = 0.0
+    tot_samples = 0
 
-    tot_loss: float = 0.0
-    tot_samples: int = 0
+    all_probs: List[float] = []
+    all_preds: List[int] = []
+    all_labels: List[int] = []
 
-    # Accumulate for global metrics
-    all_probs:  List[float] = []
-    all_preds:  List[int]   = []
-    all_labels: List[int]   = []
-
-    # Track per-class accuracy (0 / 1)
-    cls_correct: Dict[float, int] = {0: 0, 1: 0}
-    cls_total:   Dict[float, int] = {0: 0, 1: 0}
-    
+    cls_correct = {0: 0, 1: 0}
+    cls_total   = {0: 0, 1: 0}
 
     for batch in loader:
-        # val_fraud, val_nonfraud = 0, 0
+        # Unpack and move to device
         cat = batch["cat"][:, :-1].to(device)
         con = batch["cont"][:, :-1].to(device)
-        pad = batch["pad_mask"][:, :-1].bool().to(device)
-        y   = batch["label"].to(device).float()
-        uniques, counts = torch.unique(y, return_counts=True)
+        labels = batch["label"].to(device).float()
+        labels_int = labels.long()
 
-        # print them
-        for value, count in zip(uniques.tolist(), counts.tolist()):
-            print(f"{value}: {count}")
-        # val_fraud     += y.sum().item()
-        # val_nonfraud  += y.size(0) - y.sum().item()
-        # print(
-        #     f"Validation set — fraud: {val_fraud:,d}, "
-        #     f"non-fraud: {val_nonfraud:,d}"
-        # )
+        # Forward + loss
+        logits = model(cat, con, mode="fraud")
+        loss = criterion(logits, labels)
+        probs = torch.sigmoid(logits)
+        preds = (probs > threshold).long()
 
-        logits = model(cat, con, pad, mode="fraud")  # (B,1) or (B,2)
+        # Accumulate loss & counts
+        bs = labels_int.size(0)
+        tot_loss   += loss.item() * bs
+        tot_samples += bs
 
-    
-        logits = logits.squeeze(1)          # (B,)
-        loss   = criterion(logits, y.float())
-        probs  = torch.sigmoid(logits)
-        
+        all_probs .extend(probs.cpu().tolist())
+        all_preds .extend(preds.cpu().tolist())
+        all_labels.extend(labels_int.cpu().tolist())
 
-        preds = (probs > 0.5).float()
+        # Per-class accuracy
+        for c in (0, 1):
+            mask = labels_int == c
+            cls_total[c]   += int(mask.sum().item())
+            cls_correct[c] += int((preds[mask] == labels_int[mask]).sum().item())
 
-        # Book-keeping
-        batch_size = y.size(0)
-        tot_loss   += loss.item() * batch_size
-        tot_samples += batch_size
-
-        all_probs.extend(probs.cpu().tolist())
-        all_preds.extend(preds.cpu().tolist())
-        all_labels.extend(y.cpu().tolist())
-
-        for c in [0.0, 1.0]:
-            mask = (y == c)
-            cls_total[c]   += mask.sum().item()
-            cls_correct[c] += (preds[mask] == y[mask]).sum().item()
-
-    # Aggregate metrics
+    # Compute aggregated metrics
     val_loss = tot_loss / tot_samples
     labels_np = np.array(all_labels)
     preds_np  = np.array(all_preds)
     probs_np  = np.array(all_probs)
-    # probs_np is shape (n,)  —  probability of class “fraud”
-    # build a (n,2) array: [P(non-fraud), P(fraud)] for each sample
-    probas_2d = np.vstack([1 - probs_np, probs_np]).T   # shape (n,2)
+    probas_2d = np.vstack([1 - probs_np, probs_np]).T
 
-    roc_plot = wandb.plot.roc_curve(
-        y_true   = labels_np.tolist(),
-        y_probas = probas_2d.tolist(),      # <-- now a list of [p0, p1]
-        labels   = ["non-fraud", "fraud"],
-    )
-    acc       = (preds_np == labels_np).mean().item()
+    accuracy = (preds_np == labels_np).mean().item()
     precision, recall, f1, _ = precision_recall_fscore_support(
         labels_np, preds_np, average="binary", zero_division=0
     )
-
-    # AUCs can fail if only one class present; guard against that
     try:
         roc_auc = roc_auc_score(labels_np, probs_np)
     except ValueError:
         roc_auc = float("nan")
-
     try:
         pr_auc = average_precision_score(labels_np, probs_np)
     except ValueError:
@@ -243,63 +246,57 @@ def evaluate_binary(
         1: cls_correct[1] / max(cls_total[1], 1),
     }
 
-    # Log numeric metrics
+    # Log scalar metrics
     wandb.log({
-        "val_loss":      val_loss,
-        "val_accuracy":  acc,
-        "val_precision": precision,
-        "val_recall":    recall,
-        "val_f1":        f1,
-        "val_roc_auc":   roc_auc,
-        "val_pr_auc":    pr_auc,
+        "val_loss":       val_loss,
+        "val_accuracy":   accuracy,
+        "val_precision":  precision,
+        "val_recall":     recall,
+        "val_f1":         f1,
+        "val_roc_auc":    roc_auc,
+        "val_pr_auc":     pr_auc,
         "val_class_acc_0": class_acc[0],
         "val_class_acc_1": class_acc[1],
     })
 
-    # Log plots (confusion matrix, ROC, PR)
     class_labels = class_names or ["non-fraud", "fraud"]
-    cm_plot = wandb.sklearn.plot_confusion_matrix( # type: ignore
-        labels_np.tolist(),
-        preds_np.tolist(),
-        class_labels,
-    )
 
+    # Log ROC & PR curves
+    roc_plot = wandb.plot.roc_curve(
+        y_true   = labels_np.tolist(),
+        y_probas = probas_2d.tolist(),
+        labels   = class_labels,
+    )
     pr_plot = wandb.plot.pr_curve(
         y_true   = labels_np.tolist(),
         y_probas = probas_2d.tolist(),
         labels   = class_labels,
     )
-    wandb.log({
-        "confusion_matrix": cm_plot,
-        "roc_curve":        roc_plot,
-        "pr_curve":         pr_plot,
-    })
+    wandb.log({"roc_curve": roc_plot, "pr_curve": pr_plot})
 
-    metrics = {
-        "accuracy":  acc,
-        "precision": precision,
-        "recall":    recall,
-        "f1":        f1,
-        "roc_auc":   roc_auc,
-        "pr_auc":    pr_auc,
-        "class_acc_0": class_acc[0],
-        "class_acc_1": class_acc[1],
-    }
-    from collections import Counter
+    # Confusion matrices at targeted FPR thresholds
+    fpr_thresholds = [0.1, 0.05, 0.01, 0.005, 0.001]
+    results = evaluate_recall_at_fprs(labels_np, probs_np, fpr_thresholds)
+    for _, row in results.iterrows():
+        thr = row["threshold"]
+        fpr_lim = row["fpr_limit"]
+        y_pred_thr = (probs_np >= thr).astype(int)
+        cm = confusion_matrix(labels_np, y_pred_thr, labels=[0,1])
 
-    pred_counts  = Counter(all_preds)
-    label_counts = Counter(all_labels)
-
-    print(
-        f"PREDICTION COUNTS → "
-        f"non-fraud (0): {pred_counts.get(0,0):,d}, "
-        f"fraud (1): {pred_counts.get(1,0):,d}"
-    )
-    print(
-        f"LABEL COUNTS → "
-        f"non-fraud (0): {label_counts.get(0,0):,d}, "
-        f"fraud (1): {label_counts.get(1,0):,d}"
-    )
+        fig, ax = plt.subplots()
+        disp = ConfusionMatrixDisplay(cm, display_labels=class_labels)
+        disp.plot(ax=ax, cmap="Blues", values_format="d")
+        ax.set(title=f"CM @ FPR≤{fpr_lim:.3f} (thr={thr:.3f})")
+        wandb.log({f"confusion_matrix_fpr_{int(fpr_lim*100)}": wandb.Image(fig)})
 
     model.train()
-    return val_loss, metrics
+    return val_loss, {
+        "accuracy":    accuracy,
+        "precision":   precision,
+        "recall":      recall,
+        "f1":          f1,
+        "roc_auc":     roc_auc,
+        "pr_auc":      pr_auc,
+        "class_acc_0": class_acc[0],
+        "class_acc_1": class_acc[1],
+    } # type: ignore

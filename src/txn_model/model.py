@@ -6,7 +6,6 @@ Clean, internally-consistent re-implementation of the tabular-sequence model.
 Shapes (all tensors use batch-first convention):
     cat          : (B, L, C)   categorical token ids
     cont         : (B, L, F)   continuous features
-    pad_mask     : (B, L)      True for PAD positions
     field_out    : (B·L, K, D)
     row_repr     : (B, L, M)
     seq_out      : (B, L, M)
@@ -20,7 +19,6 @@ from typing import Dict, List
 import torch
 import torch.nn as nn
 from torch import Tensor, LongTensor, BoolTensor
-from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
 from config import (
     ModelConfig,
@@ -251,11 +249,11 @@ class SequenceTransformer(nn.Module):
         self.register_buffer("causal_mask", mask, persistent=False)
 
 
-    def forward(self, x: Tensor, pad_mask: BoolTensor) -> Tensor:  # (B, L, M)
+    def forward(self, x: Tensor) -> Tensor:  # (B, L, M)
         L = x.size(1)
         causal = self.causal_mask[:L, :L] # type: ignore
         x = self.pos_enc(x)
-        return self.encoder(x, mask=causal, src_key_padding_mask=pad_mask)
+        return self.encoder(x, mask=causal)
 
 
 # -------------------------------------------------------------------------------------- #
@@ -266,13 +264,11 @@ class LSTMHead(nn.Module):
     LSTM-based sequence summarization + classification head.
     Takes in a (B, L, M) sequence, returns (B, num_classes) logits.
 
-    If all input sequences are padded to the same length, packing is skipped.
+ 
     """
 
     def __init__(self, cfg: LSTMConfig, input_size: int):
         super().__init__()
-
-
 
         self.lstm = nn.LSTM(
             input_size=input_size,
@@ -286,7 +282,7 @@ class LSTMHead(nn.Module):
 
         self.fc = nn.Linear(cfg.hidden_size, 1)
 
-    def forward(self, seq_out: Tensor, lengths: Tensor) -> Tensor:
+    def forward(self, seq_out: Tensor) -> Tensor:
         """
         Parameters
         ----------
@@ -362,7 +358,6 @@ class TransactionModel(nn.Module):
         self,
         cat: LongTensor,        # (B, L, C)
         cont: Tensor,           # (B, L, F)
-        pad_mask: BoolTensor,   # (B, L)  True → PAD
         mode: str = "fraud",    # 'fraud' | 'ar'
     ):
         # ── 1) field-level attention ─────────────────────────────────────────
@@ -373,25 +368,20 @@ class TransactionModel(nn.Module):
         # ── 2) project row, then temporal transformer ───────────────────────
         B, L, _ = cat.shape
         row = self.row_proj(field).view(B, L, -1) # (B, L, M)
-        seq = self.seq_tf(row, pad_mask)          # (B, L, M)
-
-        # ── 3) sequence lengths (keep on same device) ───────────────────────
-        lengths = (~pad_mask).sum(dim=1)          # (B,)  stays on GPU
+        seq = self.seq_tf(row)          # (B, L, M)
 
         # ── 4) heads ────────────────────────────────────────────────────────
         if mode == "fraud":
             if self.lstm_head is None:
                 raise RuntimeError("Fraud head not present (pre-train config).")
-            
-            return self.lstm_head(seq, lengths)   # (B)
+            return self.lstm_head(seq)   # (B)
 
         elif mode == "ar":
-            idx = lengths - 1                     # last valid time-step per batch
-            hidden = seq[torch.arange(B, device=seq.device), idx]  # (B, M or H)
-            z = self.ar_dropout(hidden)
-            return self.ar_cat_head(z), self.ar_cont_head(z)
-        
+            h = seq[:, -1, :]                              # [B, M]
+            z = self.ar_dropout(h)                         # [B, M]
+            return self.ar_cat_head(z), self.ar_cont_head(z) 
+           
         elif mode == "lightgbm":
             return seq[:, -1, :] # shape (B, M)
         else:
-            raise ValueError("mode must be 'fraud' or 'ar'")
+            raise ValueError("mode must be 'fraud' or 'ar' or 'lightgbm'")

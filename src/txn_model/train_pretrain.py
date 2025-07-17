@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader
 
 from config            import (ModelConfig, TransformerConfig)
 from data.dataset      import TxnDataset, collate_fn, slice_batch
-from data.preprocessing import preprocess
+# from data.preprocessing import preprocess
 from model import TransactionModel
 from evaluate          import evaluate            # per-feature val metrics
 
@@ -129,7 +129,7 @@ def main():
 
     # ─── Data (load cache or create) ───────────────────────────────────────────
 
-    cache = Path(args.data_dir) / "legit_data_only.pt"
+    cache = Path(args.data_dir) / "legit_processed.pt"
     if cache.exists():
         print("Processed data exists, loading now.")
         train_df, val_df, test_df, enc, cat_features, cont_features, scaler = torch.load(cache,  weights_only=False)
@@ -214,7 +214,7 @@ def main():
         start_epoch = 0
         best_val  = float("inf")
 
-        
+    print("new train")
     vocab_sizes = list(cfg.cat_vocab_sizes.values()) # type: ignore
     crit_cat  = nn.CrossEntropyLoss()
     crit_cont = nn.MSELoss()
@@ -255,9 +255,8 @@ def main():
             batch_idx = 0
 
             for batch in prog_bar:
-            
-                cat_input, cont_inp, pad_mask, cat_tgt, cont_tgt = (t.to(device) for t in slice_batch(batch))
-                cat_logits, cont_pred = model(cat_input, cont_inp, pad_mask.bool(), mode="ar")
+                cat_input, cont_inp, cat_tgt, cont_tgt, _ = (t.to(device) for t in slice_batch(batch))
+                cat_logits, cont_pred = model(cat_input, cont_inp, mode="ar")
 
                 # categorical losses field-wise
                 start = 0
