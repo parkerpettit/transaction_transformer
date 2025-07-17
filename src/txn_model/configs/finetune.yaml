@@ -6,7 +6,7 @@ cat_features: ['User', 'Card', 'Use Chip',
        'Errors?', 'Year','Month','Day','Hour']
 
 # ───────────── training loop hyper-parameters ────────────────────────────────
-total_epochs: 10      # Number of training epochs
+total_epochs: 50      # Number of training epochs
 batch_size:   256     # Batch size for training
 lr:        2.19e-4   # Initial learning rate
 window:       10       # Sequence length (transactions per sample)
@@ -32,7 +32,7 @@ cont_features:
 # 
 unfreeze:    True               
 
-lstm_hidden:  256
-lstm_layers:  2
+lstm_hidden:  792
+lstm_layers:  1
 lstm_classes: 1
 lstm_dropout: 0.1

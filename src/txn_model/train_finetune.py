@@ -275,10 +275,10 @@ run = wandb.init(
     config = vars(args),
     resume = "allow" if args.resume else False,
 )
-wandb.watch(model, log="all", log_freq=100)
+wandb.watch(model, log="parameters", log_freq=1000)
 
 # Early-stopping setup
-patience = 5
+patience = 3
 ep_no_improve = 0
 try:
     for ep in range(start_epoch, args.total_epochs):
@@ -289,7 +289,7 @@ try:
             total=len(train_loader),
             bar_format=bar_fmt,
             ncols=200,
-            leave=False,
+            leave=True,
         )
 
         model.train()
@@ -305,6 +305,7 @@ try:
             logits = model(cat_inp, cont_inp, mode="fraud")  # (B)
 
             loss = criterion(logits, labels)
+            wandb.log({"training_loss": loss.item()})
             optim.zero_grad()
             loss.backward()
             optim.step()
@@ -320,9 +321,6 @@ try:
 
         train_loss = tot_loss / sample_count
         train_acc  = tot_correct / sample_count
-        print(train_acc)
-        wandb.log({"training_loss": train_loss})
-
         # ── validation ──────────────────────────────────────────────────────
         val_loss, val_metrics = evaluate_binary(
             model, val_loader, criterion, device,
@@ -330,10 +328,10 @@ try:
         )
 
         # log every validation statistic under a common prefix
-        wandb.log({
-            "val_loss": val_loss,
-            **{f"val_{k}": v for k, v in val_metrics.items()},
-        })
+        # wandb.log({
+        #     "val_loss": val_loss,
+        #     **{f"val_{k}": v for k, v in val_metrics.items()},
+        # }, commit=False)
 
         epoch_time_min = (time.perf_counter() - t0) / 60.0
         wandb.log({"epoch_time_min": epoch_time_min})
@@ -357,7 +355,7 @@ try:
                 model, optim, ep, best_val,
                 ckpt_path, cat_features, cont_features, cfg
             )
-            wandb.run.summary["best_val_loss"] = best_val # type: ignore
+            wandb.log({"best_val_loss": best_val}) # type: ignore
         else:
             ep_no_improve += 1
             if ep_no_improve >= patience:

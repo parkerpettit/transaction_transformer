@@ -245,7 +245,7 @@ def main():
                 total=len(train_loader),
                 bar_format=bar_fmt,
                 ncols=200,               # wider for readability 
-                leave=False,             # clear at epoch end
+                leave=True,       
             )
             
             model.train()
@@ -268,7 +268,7 @@ def main():
                 # loss_cat /= len(vocab_sizes) # average cat loss across number of categories
                 # only one continuous feature, give each head equal weight
                 loss = (loss_cat + loss_cont) / (len(vocab_sizes) + 1 )
-
+                wandb.log({"training_loss": loss.item()})
                 optim.zero_grad()
                 loss.backward()
                 optim.step()
@@ -282,7 +282,7 @@ def main():
                     "cont": f"{loss_cont.item():.4f}",
                 })
             train_loss = tot_loss / epoch_sample_count
-            wandb.log({"training_loss": train_loss})
+           
 
             val_loss, feat_acc = evaluate(model, val_loader, cat_features,
                                         {f: len(enc[f]["inv"]) for f in cat_features},
@@ -290,12 +290,12 @@ def main():
             t1 = time.perf_counter()
             time_elapsed = (t1 - t0) / 60
             wandb.log({
-            "validation_loss":  val_loss,
+            " val_loss":  val_loss,
             **{f"validation_accuracy_{k}": v for k, v in feat_acc.items()}
-            })
+            }, commit=False)
             wandb.log({
             "epoch_time_min": time_elapsed,
-            })
+            }, commit=True)
             print(f"Epoch {ep+1:02}/{args.total_epochs} "
                 f"| train {train_loss:.4f}  val {val_loss:.4f} "
                 f"| Time to complete epoch: {time_elapsed:2f} minutes")
@@ -309,7 +309,7 @@ def main():
                     model, optim, ep, best_val,
                     ckpt_path, cat_features, cont_features, cfg # type: ignore
                 )
-                wandb.run.summary["best_val_loss"] = best_val # type: ignore
+                wandb.log({"best_val_loss": best_val}) 
                 print(f"New best ({best_val:.4f}), checkpoint saved.")
             else:
                 if ep_without_improvement >= patience:
@@ -319,8 +319,7 @@ def main():
                     ep_without_improvement += 1
             # after computing preds for this batch
             if batch_idx == 0:   # print only from the first batch to avoid spam
-                # gather predictions in the same per-feature layout you used for accuracy
-                # (re-run the start/end loop or cache the per-feature argmax)
+                # gather predictions in the same per-feature layout used for accuracy
                 start = 0
                 preds_cat = torch.empty_like(cat_tgt)
                 for i, V in enumerate(vocab_sizes):

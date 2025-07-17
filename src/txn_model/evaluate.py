@@ -247,17 +247,7 @@ def evaluate_binary(
     }
 
     # Log scalar metrics
-    wandb.log({
-        "val_loss":       val_loss,
-        "val_accuracy":   accuracy,
-        "val_precision":  precision,
-        "val_recall":     recall,
-        "val_f1":         f1,
-        "val_roc_auc":    roc_auc,
-        "val_pr_auc":     pr_auc,
-        "val_class_acc_0": class_acc[0],
-        "val_class_acc_1": class_acc[1],
-    })
+
 
     class_labels = class_names or ["non-fraud", "fraud"]
 
@@ -272,11 +262,12 @@ def evaluate_binary(
         y_probas = probas_2d.tolist(),
         labels   = class_labels,
     )
-    wandb.log({"roc_curve": roc_plot, "pr_curve": pr_plot})
+    wandb.log({"roc_curve": roc_plot, "pr_curve": pr_plot}, commit=False)
 
     # Confusion matrices at targeted FPR thresholds
     fpr_thresholds = [0.1, 0.05, 0.01, 0.005, 0.001]
     results = evaluate_recall_at_fprs(labels_np, probs_np, fpr_thresholds)
+    
     for _, row in results.iterrows():
         thr = row["threshold"]
         fpr_lim = row["fpr_limit"]
@@ -287,8 +278,19 @@ def evaluate_binary(
         disp = ConfusionMatrixDisplay(cm, display_labels=class_labels)
         disp.plot(ax=ax, cmap="Blues", values_format="d")
         ax.set(title=f"CM @ FPR≤{fpr_lim:.3f} (thr={thr:.3f})")
-        wandb.log({f"confusion_matrix_fpr_{int(fpr_lim*100)}": wandb.Image(fig)})
+        wandb.log({f"confusion_matrix_fpr_{int(fpr_lim*100)}": wandb.Image(fig)}, commit=False)
 
+    wandb.log({
+        "val_loss":       val_loss,
+        "val_accuracy":   accuracy,
+        "val_precision":  precision,
+        "val_recall":     recall,
+        "val_f1":         f1,
+        "val_roc_auc":    roc_auc,
+        "val_pr_auc":     pr_auc,
+        "val_non_fraud_acc": class_acc[0],
+        "val_fraud_acc": class_acc[1],  
+        }, commit=True)
     model.train()
     return val_loss, {
         "accuracy":    accuracy,

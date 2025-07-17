@@ -10,7 +10,7 @@ program: train_pretrain.py          # entry-point that calls wandb.init()
 method: bayes              # Bayesian optimisation over the search space
 
 metric:
-  name: validation_loss
+  name:  val_loss
   goal: minimize
 
 parameters:
