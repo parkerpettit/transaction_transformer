@@ -16,6 +16,7 @@ from __future__ import annotations
 import math
 from typing import Dict, List
 
+from networkx import in_degree_centrality
 import torch
 import torch.nn as nn
 from torch import Tensor, LongTensor, BoolTensor
@@ -24,6 +25,7 @@ from config import (
     ModelConfig,
     TransformerConfig,
     LSTMConfig,
+    MLPConfig
 )
 
 # -------------------------------------------------------------------------------------- #
@@ -303,6 +305,36 @@ class LSTMHead(nn.Module):
         return self.fc(last_embedding).squeeze(dim=1)  # (B)
 
 
+class FraudHeadMLP(nn.Module):
+    def __init__(self, emb_dim: int, cfg: MLPConfig):
+        super().__init__()
+
+        layers: list[nn.Module] = []
+        # If only one layer, do a plain linear
+        if cfg.num_layers == 1:
+            layers.append(nn.Linear(emb_dim, 1))
+
+        # Otherwise build: Input → hidden → … → hidden → output
+        else:
+            # first hidden layer
+            layers.append(nn.Linear(emb_dim, cfg.hidden_size))
+            layers.append(nn.ReLU(inplace=True))
+            layers.append(nn.Dropout(cfg.dropout))
+
+            # middle hidden layers (if num_layers > 2)
+            for _ in range(cfg.num_layers - 2):
+                layers.append(nn.Linear(cfg.hidden_size, cfg.hidden_size))
+                layers.append(nn.ReLU(inplace=True))
+                layers.append(nn.Dropout(cfg.dropout))
+
+            # final output layer
+            layers.append(nn.Linear(cfg.hidden_size, 1))
+
+        self.net = nn.Sequential(*layers)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x: (batch, emb_dim)
+        return self.net(x)
 # -------------------------------------------------------------------------------------- #
 #  Full model                                                                           #
 # -------------------------------------------------------------------------------------- #
@@ -345,10 +377,17 @@ class TransactionModel(nn.Module):
             self.lstm_head = None
         # ── Autoregressive heads (always present) ──────────────────────────
         
+        if self.cfg.mlp_config is not None:
+            self.mlp_head = FraudHeadMLP(cfg.seq_config.d_model, self.cfg.mlp_config )
+
         self.ar_dropout   = nn.Dropout(cfg.clf_dropout)
         self.ar_cat_head  = nn.Linear(cfg.seq_config.d_model,
                                       sum(cfg.cat_vocab_sizes.values()))
         self.ar_cont_head = nn.Linear(cfg.seq_config.d_model, len(cfg.cont_features))
+
+      
+
+
 
 
 
@@ -371,11 +410,13 @@ class TransactionModel(nn.Module):
         seq = self.seq_tf(row)          # (B, L, M)
 
         # ── 4) heads ────────────────────────────────────────────────────────
-        if mode == "fraud":
+        if mode == "lstm":
             if self.lstm_head is None:
                 raise RuntimeError("Fraud head not present (pre-train config).")
             return self.lstm_head(seq)   # (B)
 
+        elif mode == "mlp":
+            return self.mlp_head(seq[:, -1, :]).squeeze(dim=1)
         elif mode == "ar":
             h = seq[:, -1, :]                              # [B, M]
             z = self.ar_dropout(h)                         # [B, M]
@@ -384,4 +425,4 @@ class TransactionModel(nn.Module):
         elif mode == "lightgbm":
             return seq[:, -1, :] # shape (B, M)
         else:
-            raise ValueError("mode must be 'fraud' or 'ar' or 'lightgbm'")
+            raise ValueError("mode must be 'fraud' or 'ar' or 'lightgbm' or 'linear' or 'mlp'")

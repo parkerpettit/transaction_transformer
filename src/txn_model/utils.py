@@ -64,6 +64,7 @@ def save_ckpt(
 # ──────────────────────────────────────────────────────────────────────────────
 def load_ckpt(
     path: str | Path,
+    device,
 ) -> Tuple[nn.Module, float, int]:
     """
     Returns
@@ -79,18 +80,40 @@ def load_ckpt(
 
     if not path.exists():
         raise FileNotFoundError(f"Told model to resume training from a checkpoint, but no checkpoint exists at the given directory: {path}")
-
-    ckpt = torch.load(path, weights_only=False)
-    model = TransactionModel(ckpt["config"])
-    model.load_state_dict(ckpt["model_state"])
-
-    optim  = torch.optim.Adam(model.parameters())
-    optim.load_state_dict(ckpt["optim_state"])
-
+    
+    ckpt = torch.load(path, weights_only=False, map_location=device)
+    model = TransactionModel(ckpt["config"]).to(device)
+    model.load_state_dict(ckpt["model_state"], strict=False)
     best_val = ckpt.get("best_val", float("inf"))
     start_ep = ckpt.get("epoch", 0) + 1
+    return model, best_val, start_ep, 
 
-    return model, best_val, start_ep
+def resume_finetune(
+    path: Path,
+    device: torch.device,
+    freeze_backbone: bool = True
+) -> Tuple[TransactionModel, float, int, torch.optim.Adam]:
+    ckpt = torch.load(path, map_location=device, weights_only=False)
+    cfg = ckpt["config"]
+    model = TransactionModel(cfg).to(device)
+    model.load_state_dict(ckpt["model_state"])
+
+    if freeze_backbone:
+        for n,p in model.named_parameters():
+            if not n.startswith("lstm_head"):
+                p.requires_grad = False
+
+    # build Adam over only the grad‑true params (1 group)
+    optim = torch.optim.Adam(
+        filter(lambda p: p.requires_grad, model.parameters()),
+        lr=1e-3  # dummy—will be clobbered by load_state_dict
+    )
+    optim.load_state_dict( ckpt["optim_state"] )
+
+    best_val  = ckpt.get("best_val", float("inf"))
+    start_ep  = ckpt.get("epoch", 0) + 1
+    return model, best_val, start_ep, optim
+
 
 
 # utils_cfg.py

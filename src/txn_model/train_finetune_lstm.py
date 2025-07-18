@@ -9,7 +9,7 @@ from turtle import back
 from pathlib import Path
 from torch.utils.data import DataLoader, WeightedRandomSampler
 
-from config            import (ModelConfig, TransformerConfig, LSTMConfig, MLPConfig)
+from config            import (ModelConfig, TransformerConfig, LSTMConfig)
 from data.dataset      import TxnDataset, collate_fn, slice_batch
 # from data.preprocessing import preprocess
 from model import TransactionModel
@@ -68,12 +68,6 @@ ap.add_argument("--lstm_hidden",   type=int,            help="LSTM hidden size")
 ap.add_argument("--lstm_layers",   type=int,            help="Number of LSTM layers")
 ap.add_argument("--lstm_classes",  type=int,            help="Number of LSTM classes")
 ap.add_argument("--lstm_dropout",  type=float,          help="Dropout within LSTM")
-
-
-# ───────────── MLP head ─────────────────────────────────────────────────────
-ap.add_argument("--mlp_hidden_size", type=int,   default=256, help="Hidden size for the MLP classification head")
-ap.add_argument("--mlp_num_layers",  type=int,   default=2,   help="Number of layers in the MLP classification head")
-ap.add_argument("--mlp_dropout",     type=float, default=0.1, help="Dropout probability within the MLP classification head")
 
 cli = ap.parse_args()
 
@@ -148,30 +142,6 @@ n_neg = counts.get(0, 0)
 n_pos = counts.get(1, 0)
 pos_weight = n_neg / n_pos
 print(f"negatives = {n_neg:,}, positives = {n_pos:,}, pos_weight = {pos_weight:.3f}")
-# def count_txn_labels(dataset, batch_size=1024, num_workers=4):
-#     """
-#     Iterate through TxnDataset (or via a DataLoader) and count how many
-#     windows are labeled fraud (1) vs non fraud (0).
-#     """
-#     loader = DataLoader(
-#         dataset,
-#         batch_size=batch_size,
-#         shuffle=False,
-#         num_workers=0,
-#         collate_fn=collate_fn  # or your custom collate_fn
-#     )
-#     counts = Counter()
-#     for batch in loader:
-#         # if you used your collate_fn, batch["label"] will be a tensor
-#         labels = batch["label"].flatten().tolist()
-#         counts.update(labels)
-#     print(f"non fraud: {counts.get(0,0):,d}")
-#     print(f"fraud:     {counts.get(1,0):,d}")
-#     return counts
-# print("dataloader method counting")
-# print(count_txn_labels(train_ds))
-# print(count_txn_labels(val_ds))
-
 # Example usage:
 # dataset = TxnDataset(df, "user_id", cat_feats, cont_feats, window=20, stride=5)
 # count_txn_labels(dataset)
@@ -266,11 +236,12 @@ else: # starting finetune from pretrained backbone
     model, _, _, = load_ckpt(backbone_path, device=device)
     cfg = model.cfg
 
-    # inject the new mlp config
-    cfg.mlp_config = MLPConfig(
-        hidden_size=args.mlp_hidden_size,
-        num_layers=args.mlp_num_layers,
-        dropout=args.mlp_dropout
+    # inject the new LSTM head config
+    cfg.lstm_config = LSTMConfig(
+        hidden_size = args.lstm_hidden,
+        num_layers  = args.lstm_layers,
+        num_classes = args.lstm_classes,
+        dropout     = args.lstm_dropout,
     )
 
     model = TransactionModel(cfg).to(device)
@@ -283,7 +254,7 @@ else: # starting finetune from pretrained backbone
      # freeze (or not)
     if not args.unfreeze:
         for n,p in model.named_parameters():
-            if not n.startswith("mlp"):
+            if not n.startswith("lstm_head"):
                 p.requires_grad = False
 
     optim     = torch.optim.Adam(
@@ -292,7 +263,10 @@ else: # starting finetune from pretrained backbone
     )
     start_epoch = 0
     best_val    = float("inf")
-
+    
+    # classification loss for LSTM head
+    start_epoch = 0
+    best_val    = float("inf")
 
 pos_weight_tensor = torch.tensor(pos_weight, device=device)
 criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight_tensor)
@@ -300,17 +274,16 @@ cfg = model.cfg
 
 
 print("Starting fine-tune training loop")
-
+best_f1 = -float('inf')
 # Ensure epochs sanity
 if start_epoch >= args.total_epochs:
     raise IndexError(
         f"Start epoch ({start_epoch}) >= total_epochs ({args.total_epochs})"
     )
-
-# Initialize Weights & Biases
 from datetime import datetime
 ts   = datetime.now().strftime("%Y%m%d-%H%M%S")
-name = f"finetune-linear{Path(args.data_dir).stem}-{ts}"
+name = f"finetune-{Path(args.data_dir).stem}-{ts}"
+# Initialize Weights & Biases
 run = wandb.init(
     project="txn",
     name   = name,
@@ -322,7 +295,6 @@ wandb.watch(model, log="parameters", log_freq=1000)
 # Early-stopping setup
 patience = 3
 ep_no_improve = 0
-best_f1 = -float("inf")
 try:
     for ep in range(start_epoch, args.total_epochs):
         prog_bar = tqdm(
@@ -345,7 +317,7 @@ try:
             cat_inp, cont_inp, cat_tgt, cont_tgt, labels = (t.to(device) for t in slice_batch(batch))
             labels = labels.float()
             fraud_in_batch = labels.sum().item()
-            logits = model(cat_inp, cont_inp, mode="mlp")  # (B)
+            logits = model(cat_inp, cont_inp, mode="lstm")  # (B)
 
             loss = criterion(logits, labels)
             wandb.log({"training_loss": loss.item()})
@@ -367,7 +339,7 @@ try:
         # ── validation ──────────────────────────────────────────────────────
         val_loss, val_metrics = evaluate_binary(
             model, val_loader, criterion, device,
-            class_names=["non-fraud", "fraud"], mode="mlp"
+            class_names=["non-fraud", "fraud"], mode="lstm"
         )
 
         # log every validation statistic under a common prefix
@@ -388,7 +360,6 @@ try:
             f"AUC {val_metrics['roc_auc']:.3f}) | "
             f"{epoch_time_min:.2f} min"
         )
-        
         # ── early-stopping / checkpoint ─────────────────────────────────────
         if val_loss < best_val - 1e-5:
             best_val = val_loss
@@ -402,7 +373,7 @@ try:
              # type: ignore
         elif val_metrics['f1'] > best_f1:
             best_f1 = val_metrics["f1"]
-            print("New best f1 score. Saving checkpoint.")
+            print("New best f1 score Saving checkpoint.")
             ckpt_path = Path(args.data_dir) / "finetune.ckpt"
             save_ckpt(
                 model, optim, ep, best_val,

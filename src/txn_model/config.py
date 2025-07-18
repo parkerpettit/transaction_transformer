@@ -15,8 +15,14 @@ class TransformerConfig:
 class LSTMConfig:
     hidden_size:     int   = 256
     num_layers:      int   = 2
-    num_classes:     int   = 2
+    num_classes:     int   = 1
     dropout:         float = 0.1
+
+@dataclass
+class MLPConfig:
+    hidden_size:    int = 256
+    num_layers:     int = 2
+    dropout:        float = 0.1
 
 @dataclass
 class ModelConfig:
@@ -24,6 +30,7 @@ class ModelConfig:
     cont_features:   List[str] 
     ft_config:       TransformerConfig     
     seq_config:      TransformerConfig
+    mlp_config:      Optional[MLPConfig]  = None
     lstm_config:     Optional[LSTMConfig] = None
     emb_dropout:     float                = 0.1
     clf_dropout:     float                = 0.1

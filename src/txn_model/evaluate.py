@@ -127,35 +127,72 @@ import wandb
 from sklearn.metrics import confusion_matrix
 import pandas as pd
 import numpy as np
-def evaluate_recall_at_fprs(y_true, y_pred_proba, fpr_thresholds, granularity = 2):
-  results = []
-  for fpr_threshold in fpr_thresholds:
-    best_recall = 0
-    best_threshold = 0
-    #for binary search
-    bot = 0
-    top = 1
-    while abs(top-bot) >= 10*.1**granularity:
-      threshold = round(((top+bot)/2), granularity)
-      y_pred = (y_pred_proba >= threshold).astype(int)
-      tn, fp, fn, tp = confusion_matrix(y_true, y_pred, labels = [0,1]).ravel()
-      recall = tp/(tp+fn) if (tp+fn) != 0 else 0
-      fpr = fp/(fp+tn) if (fp+tn) != 0 else 0
-      if fpr < fpr_threshold and recall > best_recall:
-        best_recall = recall
-        best_threshold = threshold
-      
-      if fpr >= fpr_threshold:
-        bot = threshold
-      else:
-        top = threshold
-    
-    results.append({
-        'threshold': best_threshold,
-        'best_recall': best_recall,
-        'fpr_limit': fpr_threshold
-    })
-  return pd.DataFrame(results)
+import numpy as np
+import pandas as pd
+from sklearn.metrics import confusion_matrix
+
+def evaluate_recall_at_fprs(y_true, y_pred_proba, fpr_thresholds, granularity=2):
+    """
+    For each fpr_limit in fpr_thresholds, find the threshold that gives the highest recall
+    while keeping FPR <= fpr_limit.  If the only way to get FPR <= fpr_limit is to predict
+    no positives (threshold=1.0), fall back to the threshold (≠1.0) whose FPR is closest
+    to fpr_limit.
+    """
+    results = []
+    step = 10 * (0.1 ** granularity)
+
+    for fpr_limit in fpr_thresholds:
+        best_recall = 0.0
+        best_thr = 1.0
+
+        # --- 1) binary search for threshold satisfying FPR <= fpr_limit ---
+        low, high = 0.0, 1.0
+        while abs(high - low) >= step:
+            mid = round((low + high) / 2, granularity)
+            preds = (y_pred_proba >= mid).astype(int)
+            tn, fp, fn, tp = confusion_matrix(y_true, preds, labels=[0,1]).ravel()
+            recall = tp / (tp + fn) if (tp + fn) else 0.0
+            fpr    = fp / (fp + tn) if (fp + tn) else 0.0
+
+            # if under the limit, consider this threshold for best recall
+            if fpr <= fpr_limit and recall > best_recall:
+                best_recall = recall
+                best_thr    = mid
+
+            # narrow search window
+            if fpr > fpr_limit:
+                low = mid
+            else:
+                high = mid
+
+        # --- 2) fallback: if best_thr == 1.0 (i.e. trivial) do a brute‐force pass ---
+        if best_recall == 0.0 and best_thr == 1.0:
+            thrs = np.unique(y_pred_proba)
+            fprs = []
+            recs = []
+            for thr in thrs:
+                preds = (y_pred_proba >= thr).astype(int)
+                tn, fp, fn, tp = confusion_matrix(y_true, preds, labels=[0,1]).ravel()
+                fprs.append(fp / (fp + tn) if (fp + tn) else 0.0)
+                recs.append(tp / (tp + fn) if (tp + fn) else 0.0)
+            fprs = np.array(fprs)
+            recs = np.array(recs)
+
+            # ignore the trivial threshold=1.0
+            mask = thrs < 1.0
+            # pick the threshold whose FPR is closest to the target
+            idx = np.argmin(np.abs(fprs[mask] - fpr_limit))
+            best_thr    = thrs[mask][idx]
+            best_recall = recs[mask][idx]
+
+        results.append({
+            'fpr_limit':   fpr_limit,
+            'threshold':   best_thr,
+            'best_recall': best_recall
+        })
+
+    return pd.DataFrame(results)
+
 from typing import List, Dict, Tuple
 import torch
 import numpy as np
@@ -175,6 +212,7 @@ def evaluate_binary(
     loader: torch.utils.data.DataLoader,
     criterion: torch.nn.BCEWithLogitsLoss,
     device: torch.device,
+    mode: str,
     threshold: float = 0.5,
     class_names: List[str] | None = None,
 ) -> Tuple[float, Dict[str, float]]:
@@ -187,11 +225,7 @@ def evaluate_binary(
     tot_samples = 0
 
     all_probs: List[float] = []
-    all_preds: List[int] = []
     all_labels: List[int] = []
-
-    cls_correct = {0: 0, 1: 0}
-    cls_total   = {0: 0, 1: 0}
 
     for batch in loader:
         # Unpack and move to device
@@ -201,37 +235,58 @@ def evaluate_binary(
         labels_int = labels.long()
 
         # Forward + loss
-        logits = model(cat, con, mode="fraud")
+        logits = model(cat, con, mode=mode)
         loss = criterion(logits, labels)
         probs = torch.sigmoid(logits)
-        preds = (probs > threshold).long()
-
         # Accumulate loss & counts
         bs = labels_int.size(0)
         tot_loss   += loss.item() * bs
         tot_samples += bs
 
         all_probs .extend(probs.cpu().tolist())
-        all_preds .extend(preds.cpu().tolist())
         all_labels.extend(labels_int.cpu().tolist())
 
         # Per-class accuracy
-        for c in (0, 1):
-            mask = labels_int == c
-            cls_total[c]   += int(mask.sum().item())
-            cls_correct[c] += int((preds[mask] == labels_int[mask]).sum().item())
+    
 
     # Compute aggregated metrics
     val_loss = tot_loss / tot_samples
     labels_np = np.array(all_labels)
-    preds_np  = np.array(all_preds)
     probs_np  = np.array(all_probs)
     probas_2d = np.vstack([1 - probs_np, probs_np]).T
 
+    fpr_thresholds = [0.01, 0.001, 0.0005, 0.0001]
+    df_thr = evaluate_recall_at_fprs(labels_np, probs_np, fpr_thresholds)
+    # extract threshold for 0.001 as
+    threshold = df_thr.loc[df_thr.fpr_limit==0.01, "threshold"].item()
+        # now binarize at that threshold
+    preds_np = (probs_np >= threshold).astype(int)
+    # Confusion matrices at targeted FPR thresholds
+    class_labels = class_names or ["non-fraud", "fraud"]
+
+    for _, row in df_thr.iterrows():
+        thr = row["threshold"]
+        fpr_lim = row["fpr_limit"]
+        y_pred_thr = (probs_np >= thr).astype(int)
+        cm = confusion_matrix(labels_np, y_pred_thr, labels=[0,1])
+
+        fig, ax = plt.subplots()
+        disp = ConfusionMatrixDisplay(cm, display_labels=class_labels)
+        disp.plot(ax=ax, cmap="Blues", values_format="d")
+        ax.set(
+        title=f"CM @ FPR≤{fpr_lim*100:.2f}% (thr={thr:.4f})"
+        )
+        key = f"confusion_matrix_fpr_{fpr_lim*100:.2f}pct"
+        wandb.log({key: wandb.Image(fig)}, commit=False)
+    
     accuracy = (preds_np == labels_np).mean().item()
     precision, recall, f1, _ = precision_recall_fscore_support(
         labels_np, preds_np, average="binary", zero_division=0
     )
+    class_acc = {
+      0: (preds_np[labels_np==0]==0).mean(),
+      1: (preds_np[labels_np==1]==1).mean(),
+    }
     try:
         roc_auc = roc_auc_score(labels_np, probs_np)
     except ValueError:
@@ -241,15 +296,7 @@ def evaluate_binary(
     except ValueError:
         pr_auc = float("nan")
 
-    class_acc = {
-        0: cls_correct[0] / max(cls_total[0], 1),
-        1: cls_correct[1] / max(cls_total[1], 1),
-    }
-
     # Log scalar metrics
-
-
-    class_labels = class_names or ["non-fraud", "fraud"]
 
     # Log ROC & PR curves
     roc_plot = wandb.plot.roc_curve(
@@ -264,21 +311,6 @@ def evaluate_binary(
     )
     wandb.log({"roc_curve": roc_plot, "pr_curve": pr_plot}, commit=False)
 
-    # Confusion matrices at targeted FPR thresholds
-    fpr_thresholds = [0.1, 0.05, 0.01, 0.005, 0.001]
-    results = evaluate_recall_at_fprs(labels_np, probs_np, fpr_thresholds)
-    
-    for _, row in results.iterrows():
-        thr = row["threshold"]
-        fpr_lim = row["fpr_limit"]
-        y_pred_thr = (probs_np >= thr).astype(int)
-        cm = confusion_matrix(labels_np, y_pred_thr, labels=[0,1])
-
-        fig, ax = plt.subplots()
-        disp = ConfusionMatrixDisplay(cm, display_labels=class_labels)
-        disp.plot(ax=ax, cmap="Blues", values_format="d")
-        ax.set(title=f"CM @ FPR≤{fpr_lim:.3f} (thr={thr:.3f})")
-        wandb.log({f"confusion_matrix_fpr_{int(fpr_lim*100)}": wandb.Image(fig)}, commit=False)
 
     wandb.log({
         "val_loss":       val_loss,
@@ -292,6 +324,7 @@ def evaluate_binary(
         "val_fraud_acc": class_acc[1],  
         }, commit=True)
     model.train()
+    plt.close("all")
     return val_loss, {
         "accuracy":    accuracy,
         "precision":   precision,
