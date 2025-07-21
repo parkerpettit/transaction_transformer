@@ -4,6 +4,7 @@ Pre-train TransactionModel to predict the next transaction
 (categorical fields + continuous amount).  No fraud head.
 Saves encoder weights to  pretrained_backbone.pt
 """
+from cProfile import label
 import wandb
 import argparse, time, torch, torch.nn as nn
 from pathlib import Path
@@ -167,10 +168,10 @@ def main():
     )
 
 
-    ckpt_path = (Path(args.data_dir) / "legit_backbone.pt")
+    ckpt_path = (Path(args.data_dir) / "big_legit_backbone.pt")
 
     if args.resume:
-        model, best_val, start_epoch = load_ckpt(ckpt_path)
+        model, best_val, start_epoch = load_ckpt(ckpt_path, device=device)
         model.to(device)
         cfg = model.cfg
     else:
@@ -216,7 +217,7 @@ def main():
 
     print("new train")
     vocab_sizes = list(cfg.cat_vocab_sizes.values()) # type: ignore
-    crit_cat  = nn.CrossEntropyLoss()
+    crit_cat  = nn.CrossEntropyLoss(label_smoothing=0.1)
     crit_cont = nn.MSELoss()
     optim     = torch.optim.Adam(model.parameters(), lr=args.lr)
     if start_epoch >= args.total_epochs:
@@ -233,7 +234,7 @@ def main():
     wandb.watch(model, log="all", log_freq=100)
 
     # ─── Training loop ─────────────────────────────────────────────────────────
-    patience = 3 # number of acceptable consecutive epochs without validation loss improvement
+    patience = 2 # number of acceptable consecutive epochs without validation loss improvement
     ep_without_improvement = 0
     # wandb.log({"batches_per_epoch": len(train_loader)})
     try:
@@ -304,7 +305,7 @@ def main():
                 ep_without_improvement = 0
                 print("New validation loss better than previous. Saving checkpoint.")             
                 best_val = val_loss                       
-                ckpt_path = Path(args.data_dir) / "legit_backbone.pt"
+                ckpt_path = Path(args.data_dir) / "big_legit_backbone.pt"
                 save_ckpt(                               
                     model, optim, ep, best_val,
                     ckpt_path, cat_features, cont_features, cfg # type: ignore
@@ -358,9 +359,9 @@ def main():
 if __name__ == "__main__":
     torch.multiprocessing.set_start_method("spawn", force=True)
     args, run = main()
-    ckpt_path = Path(args.data_dir) / "legit_backbone.pt"
+    ckpt_path = Path(args.data_dir) / "big_legit_backbone.pt"
     if wandb.run is not None:
-        artifact = wandb.Artifact("legit_backbone", type="model")
+        artifact = wandb.Artifact("big_legit_backbone", type="model")
         artifact.add_file(str(ckpt_path))
         wandb.log_artifact(artifact)
         run.finish()   

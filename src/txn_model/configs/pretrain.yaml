@@ -1,13 +1,13 @@
 # I/O
 data_dir: data         # Root directory of raw or processed data
 
-# ───────────── training loop hyper-parameters ────────────────────────────────
+# ------------- training loop hyper-parameters --------------------------------
 total_epochs: 50      # Number of training epochs
-batch_size:   384     # Batch size for training
-lr:        2.19e-4   # Initial learning rate
+batch_size:   32     # Batch size for training
+lr:           5.0e-05   # Initial learning rate
 window:       10       # Sequence length (transactions per sample)
 stride:       10      # Stride length between windows
-# ───────────── feature lists ────────────────────────────────────────────────
+# ------------- feature lists ------------------------------------------------
 cat_features:
   - User
   - Card
@@ -27,26 +27,26 @@ cont_features:
 
 
 
-# ───────────── architecture: embedding layer ────────────────────────────────
-emb_dropout: 0.0860     # Dropout after embedding layer
+# ------------- architecture: embedding layer --------------------------------
+emb_dropout: 0.0     # Dropout after embedding layer
 
-# ── Field-level transformer (intra-row) ──────────────────────────────────────
-ft_d_model:        32        # Hidden dimension
-ft_depth:          2         # Number of layers
-ft_n_heads:        4         # Number of attention heads
-ft_ffn_mult:       2         # Feedforward expansion factor
+# -- Field-level transformer (intra-row) --------------------------------------
+ft_d_model:        72        # Hidden dimension
+ft_depth:          1         # Number of layers
+ft_n_heads:        8         # Number of attention heads
+ft_ffn_mult:       4         # Feedforward expansion factor
 ft_dropout:        0.0289      # Dropout within field-transformer
-ft_layer_norm_eps: 1.0e-6    # Layer-norm epsilon
-ft_norm_first:     True      # Whether to apply norm before attention
+ft_layer_norm_eps: 1.0e-8    # Layer-norm epsilon
+ft_norm_first:     False      # Whether to apply norm before attention
 
-# ── Sequence-level transformer (inter-row) ───────────────────────────────────
-seq_d_model:        384      # Hidden dimension
-seq_depth:          2        # Number of layers
-seq_n_heads:        8        # Number of attention heads
+# -- Sequence-level transformer (inter-row) -----------------------------------
+seq_d_model:        1080      # Hidden dimension
+seq_depth:          12        # Number of layers
+seq_n_heads:        12        # Number of attention heads
 seq_ffn_mult:       4       # Feedforward expansion factor
 seq_dropout:        0.0747     # Dropout within sequence-transformer
-seq_layer_norm_eps: 1.0e-6   # Layer-norm epsilon
-seq_norm_first:     True     # Whether to apply norm before attention
+seq_layer_norm_eps: 1.0e-8   # Layer-norm epsilon
+seq_norm_first:     False     # Whether to apply norm before attention
 
-# ── Final classification layer ──────────────────────────────────────────────
-clf_dropout: 0.0707   # Dropout before final classification layer
+# -- Final classification layer ----------------------------------------------
+clf_dropout: 0.01   # Dropout before final classification layer

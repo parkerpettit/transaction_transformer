@@ -38,32 +38,26 @@ def str2bool(v):
 # --- 1. include --config flag -----------
 ap = argparse.ArgumentParser(description="Train / fine-tune TransactionModel")
 
-# ───────────── paths / run control ───────────────────────────────────────────
+# ------------- paths / run control -------------------------------------------
 ap.add_argument("--resume",        action="store_true", help="Resume from latest checkpoint in data_dir")
 ap.add_argument("--config",        type=str,            help="YAML file with default hyper-params", default="configs/finetune.yaml")
 ap.add_argument("--data_dir",      type=str,            help="Root directory of raw or processed data")
 
-# ───────────── training loop hyper-params ────────────────────────────────────
+# ------------- training loop hyper-params ------------------------------------
 ap.add_argument("--total_epochs",  type=int,            help="Number of training epochs")
 ap.add_argument("--batch_size",    type=int,            help="Batch size for training")
 ap.add_argument("--lr",            type=float,          help="Initial learning rate")
 ap.add_argument("--window",        type=int,            help="Sequence length (transactions per sample)")
 ap.add_argument("--stride",        type=int,            help="Stride length between windows")
 
-# ───────────── finetuning control ───────────────────────────────────────────
-ap.add_argument(
-    "--unfreeze",
-    nargs="?",           # 0 or 1 args
-    const=True,          # if just “--unfreeze” appear, v = True
-    default=False,       # if omitted, v = False
-    type=str2bool,       # if “--unfreeze=foo”, parse foo via str2bool
-    help="Unfreeze the transformer backbone"
-)
-# ───────────── feature lists ────────────────────────────────────────────────
+# ------------- finetuning control -------------------------------------------
+ap.add_argument("--unfreeze",      type=bool,          help="Unfreeze the transformer backbone")
+
+# ------------- feature lists ------------------------------------------------
 ap.add_argument("--cat_features",  type=str,            help="Categorical column names (override YAML)", nargs="+")
 ap.add_argument("--cont_features", type=str,            help="Continuous column names  (override YAML)", nargs="+")
 
-# ───────────── LSTM head ─────────────────────────────────────────────────────
+# ------------- LSTM head -----------------------------------------------------
 ap.add_argument("--lstm_hidden",   type=int,            help="LSTM hidden size")
 ap.add_argument("--lstm_layers",   type=int,            help="Number of LSTM layers")
 ap.add_argument("--lstm_classes",  type=int,            help="Number of LSTM classes")
@@ -78,7 +72,7 @@ file_params = load_cfg(cli.config)
 args = merge(cli, file_params)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# ─── Data ───────────────────────────────────────────────────────────────────
+# --- Data -------------------------------------------------------------------
 cache = Path(args.data_dir) / "full_processed.pt"
 if cache.exists():
     print("Processed data exists, loading now.")
@@ -113,35 +107,36 @@ val_ds = TxnDataset(val_df, cat_features[0], cat_features, cont_features,
 # print(count_txn_labels_direct(val_ds))
 
 
-from collections import Counter
-from torch.utils.data import DataLoader
+# from collections import Counter
+# from torch.utils.data import DataLoader
 
-def count_txn_labels(dataset, batch_size=1024, num_workers=0):
-    """
-    Iterate through TxnDataset (or via a DataLoader) and count how many
-    windows are labeled fraud (1) vs non fraud (0).
-    """
-    loader = DataLoader(
-        dataset,
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=0,
-        collate_fn=collate_fn  # or your custom collate_fn
-    )
-    counts = Counter()
-    for batch in loader:
-        # if you used your collate_fn, batch["label"] will be a tensor
-        labels = batch["label"].flatten().tolist()
-        counts.update(labels)
-    print(f"non fraud: {counts.get(0,0):,d}")
-    print(f"fraud:     {counts.get(1,0):,d}")
-    return counts
-print("dataloader method counting")
-counts = count_txn_labels(train_ds)
-n_neg = counts.get(0, 0)
-n_pos = counts.get(1, 0)
-pos_weight = n_neg / n_pos
-print(f"negatives = {n_neg:,}, positives = {n_pos:,}, pos_weight = {pos_weight:.3f}")
+# def count_txn_labels(dataset, batch_size=1024, num_workers=0):
+#     """
+#     Iterate through TxnDataset (or via a DataLoader) and count how many
+#     windows are labeled fraud (1) vs non fraud (0).
+#     """
+#     loader = DataLoader(
+#         dataset,
+#         batch_size=batch_size,
+#         shuffle=False,
+#         num_workers=0,
+#         collate_fn=collate_fn  # or your custom collate_fn
+#     )
+#     counts = Counter()
+#     for batch in loader:
+#         # if you used your collate_fn, batch["label"] will be a tensor
+#         labels = batch["label"].flatten().tolist()
+#         counts.update(labels)
+#     print(f"non fraud: {counts.get(0,0):,d}")
+#     print(f"fraud:     {counts.get(1,0):,d}")
+#     return counts
+# print("dataloader method counting")
+# counts = count_txn_labels(train_ds)
+# n_neg = counts.get(0, 0)
+# n_pos = counts.get(1, 0)
+pos_weight = 82.421
+
+# print(f"negatives = {n_neg:,}, positives = {n_pos:,}, pos_weight = {pos_weight:.3f}")
 # Example usage:
 # dataset = TxnDataset(df, "user_id", cat_feats, cont_feats, window=20, stride=5)
 # count_txn_labels(dataset)
@@ -222,12 +217,12 @@ bar_fmt = (
 )
 
 backbone_path = Path(args.data_dir) / "legit_backbone.pt"
-finetune_ckpt = Path(args.data_dir) / "finetune.ckpt"
+finetune_ckpt = Path(args.data_dir) / "finetune_lstm.ckpt"
 # pos_weight = torch.tensor(818.5349, dtype=torch.float32)
 
 if args.resume and finetune_ckpt.exists():
     # resume entire fine-tune run
-    model, best_val, start_epoch, optim = resume_finetune(finetune_ckpt, freeze_backbone=True, device=device)
+    model, best_val, start_epoch, optim = resume_finetune(finetune_ckpt, unfreeze_backbone=args.unfreeze, device=device)
     print(f"Resuming fine-tune from epoch {start_epoch}, best val={best_val:.4f}")
 else: # starting finetune from pretrained backbone
     # --- load backbone config & weights ---
@@ -237,14 +232,14 @@ else: # starting finetune from pretrained backbone
     cfg = model.cfg
 
     # inject the new LSTM head config
-    cfg.lstm_config = LSTMConfig(
+    cfg.lstm_config = LSTMConfig( # type: ignore
         hidden_size = args.lstm_hidden,
         num_layers  = args.lstm_layers,
         num_classes = args.lstm_classes,
         dropout     = args.lstm_dropout,
     )
 
-    model = TransactionModel(cfg).to(device)
+    model = TransactionModel(cfg).to(device)  # type: ignore
     # print(cfg)
     # print("------------------")
     # print(cfg.lstm_config)
@@ -283,12 +278,17 @@ if start_epoch >= args.total_epochs:
 from datetime import datetime
 ts   = datetime.now().strftime("%Y%m%d-%H%M%S")
 name = f"finetune-{Path(args.data_dir).stem}-{ts}"
+if args.unfreeze:
+    tag = "lstm_unfrozen"
+elif not args.unfreeze:
+    tag = "lstm_frozen"
 # Initialize Weights & Biases
 run = wandb.init(
     project="txn",
     name   = name,
     config = vars(args),
     resume = "allow" if args.resume else False,
+    tags = [tag]
 )
 wandb.watch(model, log="parameters", log_freq=1000)
 
@@ -336,7 +336,7 @@ try:
 
         train_loss = tot_loss / sample_count
         train_acc  = tot_correct / sample_count
-        # ── validation ──────────────────────────────────────────────────────
+        # -- validation ------------------------------------------------------
         val_loss, val_metrics = evaluate_binary(
             model, val_loader, criterion, device,
             class_names=["non-fraud", "fraud"], mode="lstm"
@@ -360,21 +360,24 @@ try:
             f"AUC {val_metrics['roc_auc']:.3f}) | "
             f"{epoch_time_min:.2f} min"
         )
-        # ── early-stopping / checkpoint ─────────────────────────────────────
+        # -- early-stopping / checkpoint -------------------------------------
         if val_loss < best_val - 1e-5:
             best_val = val_loss
             ep_no_improve = 0
             print("New best validation loss. Saving checkpoint.")
-            ckpt_path = Path(args.data_dir) / "finetune.ckpt"
+            ckpt_path = Path(args.data_dir) / "finetune_lstm.ckpt"
             save_ckpt(
                 model, optim, ep, best_val,
                 ckpt_path, cat_features, cont_features, cfg
             )
              # type: ignore
+            if val_metrics['f1'] > best_f1:
+                best_f1 = val_metrics["f1"]
+                print("New best f1 score. Saving checkpoint.")
         elif val_metrics['f1'] > best_f1:
             best_f1 = val_metrics["f1"]
             print("New best f1 score Saving checkpoint.")
-            ckpt_path = Path(args.data_dir) / "finetune.ckpt"
+            ckpt_path = Path(args.data_dir) / "finetune_lstm.ckpt"
             save_ckpt(
                 model, optim, ep, best_val,
                 ckpt_path, cat_features, cont_features, cfg
@@ -399,7 +402,7 @@ except RuntimeError as e:
         sys.exit(98)
 
 finally:
-    ckpt_path = Path(args.data_dir) / "finetune.ckpt"
+    ckpt_path = Path(args.data_dir) / "finetune_lstm.ckpt"
     if wandb.run is not None and ckpt_path.exists():
         artifact = wandb.Artifact("finetune-model", type="model")
         artifact.add_file(str(ckpt_path))

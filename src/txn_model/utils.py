@@ -26,9 +26,9 @@ from config import ModelConfig   # only for typing / pretty storage
 log = logging.getLogger(__name__)
 
 
-# ──────────────────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------------------
 #  save
-# ──────────────────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------------------
 def save_ckpt(
     model: nn.Module,
     optim: optim.Optimizer,
@@ -59,9 +59,9 @@ def save_ckpt(
 
 
 
-# ──────────────────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------------------
 #  load / resume
-# ──────────────────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------------------
 def load_ckpt(
     path: str | Path,
     device,
@@ -78,7 +78,7 @@ def load_ckpt(
     if type(path) == str:
         path = Path(path)
 
-    if not path.exists():
+    if not path.exists(): # type: ignore
         raise FileNotFoundError(f"Told model to resume training from a checkpoint, but no checkpoint exists at the given directory: {path}")
     
     ckpt = torch.load(path, weights_only=False, map_location=device)
@@ -91,14 +91,14 @@ def load_ckpt(
 def resume_finetune(
     path: Path,
     device: torch.device,
-    freeze_backbone: bool = True
+    unfreeze_backbone: bool = True
 ) -> Tuple[TransactionModel, float, int, torch.optim.Adam]:
     ckpt = torch.load(path, map_location=device, weights_only=False)
     cfg = ckpt["config"]
     model = TransactionModel(cfg).to(device)
     model.load_state_dict(ckpt["model_state"])
 
-    if freeze_backbone:
+    if not unfreeze_backbone:
         for n,p in model.named_parameters():
             if not n.startswith("lstm_head"):
                 p.requires_grad = False

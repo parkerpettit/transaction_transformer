@@ -5,13 +5,13 @@ cat_features: ['User', 'Card', 'Use Chip',
        'Merchant Name', 'Merchant City', 'Merchant State', 'Zip', 'MCC',
        'Errors?', 'Year','Month','Day','Hour']
 
-# ───────────── training loop hyper-parameters ────────────────────────────────
+# ------------- training loop hyper-parameters --------------------------------
 total_epochs: 50      # Number of training epochs
-batch_size:   512     # Batch size for training
-lr:        2.19e-4   # Initial learning rate
+batch_size:   32     # Batch size for training
+lr:           5.0e-5  # Initial learning rate
 window:       10       # Sequence length (transactions per sample)
 stride:       10       # Stride length between windows
-# ───────────── feature lists ────────────────────────────────────────────────
+# ------------- feature lists ------------------------------------------------
 cat_features:
   - User
   - Card
@@ -29,10 +29,13 @@ cat_features:
 cont_features:
   - Amount  
 
-# 
-unfreeze:  False               
+mlp_hidden_size: 512
+mlp_num_layers: 2
+mlp_dropout: 0.1
 
-lstm_hidden:  792
-lstm_layers:  1
-lstm_classes: 1
-lstm_dropout: 0.1
+unfreeze:  True               
+
+# lstm_hidden:  0
+# lstm_layers:  0
+# lstm_classes: 0
+# lstm_dropout: 0

@@ -203,7 +203,7 @@ clf.fit(
 log_summary(clf.booster_, save_model_checkpoint=True)
 
 # 5. Evaluate on test set
-y_prob = clf.predict_proba(X_test)[:, 1]
+y_prob = clf.predict_proba(X_test)[:, 1] # type: ignore
 
 
 # 6. Log metrics to W&B
@@ -245,37 +245,37 @@ wandb.log({"classification_report": report})
 wandb.finish()
 
 
-from sklearn.metrics import confusion_matrix
-import pandas as pd
-import numpy as np
-def evaluate_recall_at_fprs(y_true, y_pred_proba, fpr_thresholds, granularity = 10):
-  results = []
-  for fpr_threshold in fpr_thresholds:
-    best_recall = 0
-    best_threshold = 0
-    #for binary search
-    bot = 0
-    top = 1
-    while abs(top-bot) >= 10*.1**granularity:
-      threshold = round(((top+bot)/2), granularity)
-      y_pred = (y_pred_proba >= threshold).astype(int)
-      tn, fp, fn, tp = confusion_matrix(y_true, y_pred, labels = [0,1]).ravel()
-      recall = tp/(tp+fn) if (tp+fn) != 0 else 0
-      fpr = fp/(fp+tn) if (fp+tn) != 0 else 0
-      if fpr < fpr_threshold and recall > best_recall:
-        best_recall = recall
-        best_threshold = threshold
+# from sklearn.metrics import confusion_matrix
+# import pandas as pd
+# import numpy as np
+# def evaluate_recall_at_fprs(y_true, y_pred_proba, fpr_thresholds, granularity = 10):
+#   results = []
+#   for fpr_threshold in fpr_thresholds:
+#     best_recall = 0
+#     best_threshold = 0
+#     #for binary search
+#     bot = 0
+#     top = 1
+#     while abs(top-bot) >= 10*.1**granularity:
+#       threshold = round(((top+bot)/2), granularity)
+#       y_pred = (y_pred_proba >= threshold).astype(int)
+#       tn, fp, fn, tp = confusion_matrix(y_true, y_pred, labels = [0,1]).ravel()
+#       recall = tp/(tp+fn) if (tp+fn) != 0 else 0
+#       fpr = fp/(fp+tn) if (fp+tn) != 0 else 0
+#       if fpr < fpr_threshold and recall > best_recall:
+#         best_recall = recall
+#         best_threshold = threshold
       
-      if fpr >= fpr_threshold:
-        bot = threshold
-      else:
-        top = threshold
+#       if fpr >= fpr_threshold:
+#         bot = threshold
+#       else:
+#         top = threshold
     
-    results.append({
-        'threshold': best_threshold,
-        'best_recall': best_recall,
-        'fpr_limit': fpr_threshold
-    })
-  return pd.DataFrame(results)
+#     results.append({
+#         'threshold': best_threshold,
+#         'best_recall': best_recall,
+#         'fpr_limit': fpr_threshold
+#     })
+#   return pd.DataFrame(results)
 
 

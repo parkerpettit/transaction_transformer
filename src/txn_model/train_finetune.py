@@ -38,42 +38,35 @@ def str2bool(v):
 # --- 1. include --config flag -----------
 ap = argparse.ArgumentParser(description="Train / fine-tune TransactionModel")
 
-# ───────────── paths / run control ───────────────────────────────────────────
-ap.add_argument("--resume",        action="store_true", help="Resume from latest checkpoint in data_dir")
+# ------------- paths / run control -------------------------------------------
+ap.add_argument("--resume",        type=bool,           help="Resume from latest checkpoint in data_dir")
 ap.add_argument("--config",        type=str,            help="YAML file with default hyper-params", default="configs/finetune.yaml")
 ap.add_argument("--data_dir",      type=str,            help="Root directory of raw or processed data")
 
-# ───────────── training loop hyper-params ────────────────────────────────────
+# ------------- training loop hyper-params ------------------------------------
 ap.add_argument("--total_epochs",  type=int,            help="Number of training epochs")
 ap.add_argument("--batch_size",    type=int,            help="Batch size for training")
 ap.add_argument("--lr",            type=float,          help="Initial learning rate")
 ap.add_argument("--window",        type=int,            help="Sequence length (transactions per sample)")
 ap.add_argument("--stride",        type=int,            help="Stride length between windows")
 
-# ───────────── finetuning control ───────────────────────────────────────────
-ap.add_argument(
-    "--unfreeze",
-    nargs="?",           # 0 or 1 args
-    const=True,          # if just “--unfreeze” appear, v = True
-    default=False,       # if omitted, v = False
-    type=str2bool,       # if “--unfreeze=foo”, parse foo via str2bool
-    help="Unfreeze the transformer backbone"
-)
-# ───────────── feature lists ────────────────────────────────────────────────
+# ------------- finetuning control -------------------------------------------
+ap.add_argument("--unfreeze",      type=bool,          help="Unfreeze the transformer backbone")
+# ------------- feature lists ------------------------------------------------
 ap.add_argument("--cat_features",  type=str,            help="Categorical column names (override YAML)", nargs="+")
 ap.add_argument("--cont_features", type=str,            help="Continuous column names  (override YAML)", nargs="+")
 
-# ───────────── LSTM head ─────────────────────────────────────────────────────
+# ------------- LSTM head -----------------------------------------------------
 ap.add_argument("--lstm_hidden",   type=int,            help="LSTM hidden size")
 ap.add_argument("--lstm_layers",   type=int,            help="Number of LSTM layers")
 ap.add_argument("--lstm_classes",  type=int,            help="Number of LSTM classes")
 ap.add_argument("--lstm_dropout",  type=float,          help="Dropout within LSTM")
 
 
-# ───────────── MLP head ─────────────────────────────────────────────────────
-ap.add_argument("--mlp_hidden_size", type=int,   default=256, help="Hidden size for the MLP classification head")
-ap.add_argument("--mlp_num_layers",  type=int,   default=2,   help="Number of layers in the MLP classification head")
-ap.add_argument("--mlp_dropout",     type=float, default=0.1, help="Dropout probability within the MLP classification head")
+# ------------- MLP head -----------------------------------------------------
+ap.add_argument("--mlp_hidden_size", type=int,          help="Hidden size for the MLP classification head")
+ap.add_argument("--mlp_num_layers",  type=int,          help="Number of layers in the MLP classification head")
+ap.add_argument("--mlp_dropout",     type=float,        help="Dropout probability within the MLP classification head")
 
 cli = ap.parse_args()
 
@@ -84,7 +77,7 @@ file_params = load_cfg(cli.config)
 args = merge(cli, file_params)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# ─── Data ───────────────────────────────────────────────────────────────────
+# --- Data -------------------------------------------------------------------
 cache = Path(args.data_dir) / "full_processed.pt"
 if cache.exists():
     print("Processed data exists, loading now.")
@@ -103,51 +96,7 @@ train_ds = TxnDataset(train_df, cat_features[0], cat_features, cont_features,
 val_ds = TxnDataset(val_df, cat_features[0], cat_features, cont_features,
                args.window, args.window)
 
-
-# from collections import Counter
-
-# def count_txn_labels_direct(dataset):
-#     counts = Counter()
-#     for i in range(len(dataset)):
-#         label = int(dataset[i]["label"].item())
-#         counts[label] += 1
-#     print(f"non fraud: {counts.get(0,0):,d}")
-#     print(f"fraud:     {counts.get(1,0):,d}")
-#     return counts
-
-# print(count_txn_labels_direct(train_ds))
-# print(count_txn_labels_direct(val_ds))
-
-
-from collections import Counter
-from torch.utils.data import DataLoader
-
-def count_txn_labels(dataset, batch_size=1024, num_workers=0):
-    """
-    Iterate through TxnDataset (or via a DataLoader) and count how many
-    windows are labeled fraud (1) vs non fraud (0).
-    """
-    loader = DataLoader(
-        dataset,
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=0,
-        collate_fn=collate_fn  # or your custom collate_fn
-    )
-    counts = Counter()
-    for batch in loader:
-        # if you used your collate_fn, batch["label"] will be a tensor
-        labels = batch["label"].flatten().tolist()
-        counts.update(labels)
-    print(f"non fraud: {counts.get(0,0):,d}")
-    print(f"fraud:     {counts.get(1,0):,d}")
-    return counts
-print("dataloader method counting")
-counts = count_txn_labels(train_ds)
-n_neg = counts.get(0, 0)
-n_pos = counts.get(1, 0)
-pos_weight = n_neg / n_pos
-print(f"negatives = {n_neg:,}, positives = {n_pos:,}, pos_weight = {pos_weight:.3f}")
+pos_weight = 82.421
 # def count_txn_labels(dataset, batch_size=1024, num_workers=4):
 #     """
 #     Iterate through TxnDataset (or via a DataLoader) and count how many
@@ -178,40 +127,6 @@ print(f"negatives = {n_neg:,}, positives = {n_pos:,}, pos_weight = {pos_weight:.
 
 print("Creating training loader")
 
-# def ratio_sampler(ds: TxnDataset, target_pos_frac: float) -> WeightedRandomSampler:
-#     """
-#     Build a sampler that draws approximately `target_pos_frac` of its samples
-#     from the positive class and (1-target_pos_frac) from negative.
-#     """
-#     # 1) get the per-window “last-transaction” labels
-#     gidx = ds.indices[:, 0]
-#     offs = ds.indices[:, 1]
-#     ends = np.array([
-#         ds.group_offsets[g][0] + off + ds.window - 1
-#         for g, off in zip(gidx, offs)
-#     ], dtype=np.int32)
-#     labels = ds.labels[ends]  # array of 0/1
-
-#     # 2) base inverse-frequency weights (makes 50/50 by default)
-#     counts = np.bincount(labels, minlength=2)     # [neg_count, pos_count]
-#     base_weights = 1.0 / counts[labels]
-
-#     # 3) scale each class so its expected share becomes target_pos_frac
-#     #    originally each class has sum(base_weights)==1 => 50/50
-#     factor_pos = 2 * target_pos_frac               # e.g. 0.3→0.6
-#     factor_neg = 2 * (1 - target_pos_frac)         # e.g. 0.7→1.4
-
-#     # 4) apply the scaling
-#     weights = base_weights * np.where(labels==1, factor_pos, factor_neg)
-
-#     return WeightedRandomSampler(
-#         weights     = weights, # type: ignore
-#         num_samples = len(labels),
-#         replacement = True,
-#     )
-# train_sampler = ratio_sampler(train_ds, target_pos_frac=0.3)
-# val_sampler   = ratio_sampler(val_ds,   target_pos_frac=0.3)      # now uses val label distribution
-
 train_loader = DataLoader(
     train_ds,
     batch_size = args.batch_size,
@@ -227,18 +142,6 @@ val_loader = DataLoader(
 )
 
 
-# val_loader = DataLoader(
-#     val_ds,
-#     batch_size   = args.batch_size,
-#     shuffle      = False,       # natural ordering
-#     collate_fn   = collate_fn,
-# )
-
-# print("Creating validation loader")
-
-
-
-
 print("Starting fine-tuning loop")
 
 # progress bar format (reuse from pretrain)
@@ -251,13 +154,13 @@ bar_fmt = (
     "{postfix}"
 )
 
-backbone_path = Path(args.data_dir) / "legit_backbone.pt"
-finetune_ckpt = Path(args.data_dir) / "finetune.ckpt"
+backbone_path = Path(args.data_dir) / "big_legit_backbone.pt"
+finetune_ckpt = Path(args.data_dir) / "big_finetune.ckpt"
 # pos_weight = torch.tensor(818.5349, dtype=torch.float32)
 
 if args.resume and finetune_ckpt.exists():
     # resume entire fine-tune run
-    model, best_val, start_epoch, optim = resume_finetune(finetune_ckpt, freeze_backbone=True, device=device)
+    model, best_val, start_epoch, optim = resume_finetune(finetune_ckpt, unfreeze_backbone=True, device=device)
     print(f"Resuming fine-tune from epoch {start_epoch}, best val={best_val:.4f}")
 else: # starting finetune from pretrained backbone
     # --- load backbone config & weights ---
@@ -267,17 +170,13 @@ else: # starting finetune from pretrained backbone
     cfg = model.cfg
 
     # inject the new mlp config
-    cfg.mlp_config = MLPConfig(
+    cfg.mlp_config = MLPConfig( # type: ignore
         hidden_size=args.mlp_hidden_size,
         num_layers=args.mlp_num_layers,
         dropout=args.mlp_dropout
     )
 
-    model = TransactionModel(cfg).to(device)
-    # print(cfg)
-    # print("------------------")
-    # print(cfg.lstm_config)
-    # build model and load backbone weights (all except LSTM head)
+    model = TransactionModel(cfg).to(device) # type: ignore
     print(f"Loaded backbone from {backbone_path}")
 
      # freeze (or not)
@@ -311,11 +210,17 @@ if start_epoch >= args.total_epochs:
 from datetime import datetime
 ts   = datetime.now().strftime("%Y%m%d-%H%M%S")
 name = f"finetune-linear{Path(args.data_dir).stem}-{ts}"
+if args.unfreeze:
+    tag = "mlp_unfrozen"
+elif not args.unfreeze:
+    tag = "mlp_frozen"
+
 run = wandb.init(
-    project="txn",
+    project="fraud",
     name   = name,
     config = vars(args),
-    resume = "allow" if args.resume else False,
+    resume = "auto",
+    tags=[tag]
 )
 wandb.watch(model, log="parameters", log_freq=1000)
 
@@ -364,7 +269,7 @@ try:
 
         train_loss = tot_loss / sample_count
         train_acc  = tot_correct / sample_count
-        # ── validation ──────────────────────────────────────────────────────
+        # -- validation ------------------------------------------------------
         val_loss, val_metrics = evaluate_binary(
             model, val_loader, criterion, device,
             class_names=["non-fraud", "fraud"], mode="mlp"
@@ -389,21 +294,25 @@ try:
             f"{epoch_time_min:.2f} min"
         )
         
-        # ── early-stopping / checkpoint ─────────────────────────────────────
+        # -- early-stopping / checkpoint -------------------------------------
         if val_loss < best_val - 1e-5:
             best_val = val_loss
             ep_no_improve = 0
             print("New best validation loss. Saving checkpoint.")
-            ckpt_path = Path(args.data_dir) / "finetune.ckpt"
+            ckpt_path = Path(args.data_dir) / "big_finetune.ckpt"
             save_ckpt(
                 model, optim, ep, best_val,
                 ckpt_path, cat_features, cont_features, cfg
             )
              # type: ignore
+             
+            if val_metrics['f1'] > best_f1:
+                best_f1 = val_metrics["f1"]
+                print("New best f1 score. Saving checkpoint.")
         elif val_metrics['f1'] > best_f1:
             best_f1 = val_metrics["f1"]
             print("New best f1 score. Saving checkpoint.")
-            ckpt_path = Path(args.data_dir) / "finetune.ckpt"
+            ckpt_path = Path(args.data_dir) / "big_finetune.ckpt"
             save_ckpt(
                 model, optim, ep, best_val,
                 ckpt_path, cat_features, cont_features, cfg
@@ -428,7 +337,7 @@ except RuntimeError as e:
         sys.exit(98)
 
 finally:
-    ckpt_path = Path(args.data_dir) / "finetune.ckpt"
+    ckpt_path = Path(args.data_dir) / "big_finetune.ckpt"
     if wandb.run is not None and ckpt_path.exists():
         artifact = wandb.Artifact("finetune-model", type="model")
         artifact.add_file(str(ckpt_path))

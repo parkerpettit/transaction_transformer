@@ -1,28 +1,21 @@
-import logging
-import torch
-import torch.nn as nn
-from config import (
-    ModelConfig,
-    TransformerConfig,
-    LSTMConfig,
-)
-from model import TransactionModel
+from typing import List, Dict, Tuple
 
-from data.dataset import slice_batch
-
-from typing import Dict, List, Tuple
-import torch
-import torch.nn as nn
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
 import torch
 from torch import nn
-from sklearn.metrics import (
-    precision_score, recall_score, f1_score,
-    roc_auc_score, confusion_matrix,
-    average_precision_score, matthews_corrcoef
-)
-import wandb
-import sklearn
 
+from sklearn.metrics import (
+    confusion_matrix,
+    precision_recall_fscore_support,
+    roc_auc_score,
+    average_precision_score,
+    ConfusionMatrixDisplay,
+)
+
+import wandb
+from data.dataset import slice_batch
 
 @torch.no_grad()
 def evaluate(
@@ -89,7 +82,7 @@ def evaluate(
     print("\n▶ Feature-wise Accuracy:")
     for name, acc in feat_acc.items():
         print(f"  - {name:<20}: {acc*100:.2f}%")
-    print(f"  └─ Avg Val Loss: {avg_loss:.4f}\n")
+    print(f"  └- Avg Val Loss: {avg_loss:.4f}\n")
 
     model.train()           # restore training mode
     return avg_loss, feat_acc
@@ -131,73 +124,10 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import confusion_matrix
 
-def evaluate_recall_at_fprs(y_true, y_pred_proba, fpr_thresholds, granularity=2):
-    """
-    For each fpr_limit in fpr_thresholds, find the threshold that gives the highest recall
-    while keeping FPR <= fpr_limit.  If the only way to get FPR <= fpr_limit is to predict
-    no positives (threshold=1.0), fall back to the threshold (≠1.0) whose FPR is closest
-    to fpr_limit.
-    """
-    results = []
-    step = 10 * (0.1 ** granularity)
-
-    for fpr_limit in fpr_thresholds:
-        best_recall = 0.0
-        best_thr = 1.0
-
-        # --- 1) binary search for threshold satisfying FPR <= fpr_limit ---
-        low, high = 0.0, 1.0
-        while abs(high - low) >= step:
-            mid = round((low + high) / 2, granularity)
-            preds = (y_pred_proba >= mid).astype(int)
-            tn, fp, fn, tp = confusion_matrix(y_true, preds, labels=[0,1]).ravel()
-            recall = tp / (tp + fn) if (tp + fn) else 0.0
-            fpr    = fp / (fp + tn) if (fp + tn) else 0.0
-
-            # if under the limit, consider this threshold for best recall
-            if fpr <= fpr_limit and recall > best_recall:
-                best_recall = recall
-                best_thr    = mid
-
-            # narrow search window
-            if fpr > fpr_limit:
-                low = mid
-            else:
-                high = mid
-
-        # --- 2) fallback: if best_thr == 1.0 (i.e. trivial) do a brute‐force pass ---
-        if best_recall == 0.0 and best_thr == 1.0:
-            thrs = np.unique(y_pred_proba)
-            fprs = []
-            recs = []
-            for thr in thrs:
-                preds = (y_pred_proba >= thr).astype(int)
-                tn, fp, fn, tp = confusion_matrix(y_true, preds, labels=[0,1]).ravel()
-                fprs.append(fp / (fp + tn) if (fp + tn) else 0.0)
-                recs.append(tp / (tp + fn) if (tp + fn) else 0.0)
-            fprs = np.array(fprs)
-            recs = np.array(recs)
-
-            # ignore the trivial threshold=1.0
-            mask = thrs < 1.0
-            # pick the threshold whose FPR is closest to the target
-            idx = np.argmin(np.abs(fprs[mask] - fpr_limit))
-            best_thr    = thrs[mask][idx]
-            best_recall = recs[mask][idx]
-
-        results.append({
-            'fpr_limit':   fpr_limit,
-            'threshold':   best_thr,
-            'best_recall': best_recall
-        })
-
-    return pd.DataFrame(results)
-
-from typing import List, Dict, Tuple
-import torch
 import numpy as np
-import matplotlib.pyplot as plt
-import wandb
+import pandas as pd
+import numpy as np
+import pandas as pd
 from sklearn.metrics import (
     confusion_matrix,
     precision_recall_fscore_support,
@@ -205,6 +135,82 @@ from sklearn.metrics import (
     average_precision_score,
     ConfusionMatrixDisplay
 )
+import matplotlib.pyplot as plt
+import wandb
+import torch
+
+# ---------- Helper: exact thresholds for FPR limits ----------
+def thresholds_for_fpr_limits(y_true: np.ndarray,
+                              y_score: np.ndarray,
+                              fpr_limits: list[float]) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Returns:
+      df_limits: one row per requested fpr_limit with chosen threshold and metrics.
+      curve: full monotone curve at every unique probability (optional for analysis).
+    """
+    y_true  = np.asarray(y_true,  dtype=np.int8)
+    y_score = np.asarray(y_score, dtype=np.float32)
+
+    order = np.argsort(-y_score)               # descending scores
+    y_sorted = y_true[order]
+    scores_sorted = y_score[order]
+
+    # block ends (unique thresholds)
+    change = np.empty_like(scores_sorted, dtype=bool)
+    change[:-1] = scores_sorted[:-1] != scores_sorted[1:]
+    change[-1] = True
+    block_idx = np.nonzero(change)[0]
+
+    pos_mask = (y_sorted == 1)
+    cum_pos = np.cumsum(pos_mask)
+    cum_neg = np.cumsum(~pos_mask)
+
+    total_pos = int(cum_pos[-1])
+    total_neg = int(cum_neg[-1])
+
+    tp = cum_pos[block_idx]
+    fp = cum_neg[block_idx]
+    fn = total_pos - tp
+    tn = total_neg - fp
+
+    recall = tp / total_pos if total_pos else np.zeros_like(tp, dtype=float)
+    fpr = fp / total_neg if total_neg else np.zeros_like(fp, dtype=float)
+    thresholds = scores_sorted[block_idx]
+
+    # fpr is non‑decreasing w.r.t. lowering threshold
+    df_curve = pd.DataFrame({
+        "threshold": thresholds,
+        "fpr": fpr,
+        "recall": recall,
+        "tp": tp, "fp": fp, "fn": fn, "tn": tn
+    })
+
+    results = []
+    for limit in fpr_limits:
+        idx = np.searchsorted(fpr, limit, side="right") - 1
+        if idx >= 0 and fpr[idx] <= limit:
+            chosen = idx
+        else:
+            # no feasible point (other than predicting none) under limit:
+            # choose closest; prefer undershoot
+            diffs = np.abs(fpr - limit)
+            penalty = (fpr > limit).astype(int)
+            # lexicographic: (penalty, diff, threshold) -> pick first
+            chosen = np.lexsort((thresholds, diffs, penalty))[0]
+
+        results.append({
+            "fpr_limit": float(limit),
+            "threshold": float(thresholds[chosen]),
+            "fpr": float(fpr[chosen]),
+            "recall": float(recall[chosen]),
+            "tp": int(tp[chosen]),
+            "fp": int(fp[chosen]),
+            "fn": int(fn[chosen]),
+            "tn": int(tn[chosen]),
+        })
+
+    return pd.DataFrame(results), df_curve
+
 
 @torch.no_grad()
 def evaluate_binary(
@@ -213,79 +219,71 @@ def evaluate_binary(
     criterion: torch.nn.BCEWithLogitsLoss,
     device: torch.device,
     mode: str,
-    threshold: float = 0.5,
-    class_names: List[str] | None = None,
-) -> Tuple[float, Dict[str, float]]:
-    """
-    Evaluate a binary (fraud vs non-fraud) model using BCEWithLogitsLoss.
-    Logs scalar metrics, ROC/PR curves, and confusion matrices at various FPR thresholds.
-    """
+    class_names: list[str] | None = None,
+):
     model.eval()
+
     tot_loss = 0.0
     tot_samples = 0
-
-    all_probs: List[float] = []
-    all_labels: List[int] = []
+    all_probs: list[float] = []
+    all_labels: list[int] = []
 
     for batch in loader:
-        # Unpack and move to device
         cat = batch["cat"][:, :-1].to(device)
         con = batch["cont"][:, :-1].to(device)
         labels = batch["label"].to(device).float()
         labels_int = labels.long()
 
-        # Forward + loss
         logits = model(cat, con, mode=mode)
         loss = criterion(logits, labels)
         probs = torch.sigmoid(logits)
-        # Accumulate loss & counts
+
         bs = labels_int.size(0)
-        tot_loss   += loss.item() * bs
+        tot_loss += loss.item() * bs
         tot_samples += bs
 
-        all_probs .extend(probs.cpu().tolist())
+        all_probs.extend(probs.cpu().tolist())
         all_labels.extend(labels_int.cpu().tolist())
 
-        # Per-class accuracy
-    
-
-    # Compute aggregated metrics
     val_loss = tot_loss / tot_samples
-    labels_np = np.array(all_labels)
-    probs_np  = np.array(all_probs)
+    labels_np = np.asarray(all_labels, dtype=np.int8)
+    probs_np  = np.asarray(all_probs,  dtype=np.float32)
     probas_2d = np.vstack([1 - probs_np, probs_np]).T
 
-    fpr_thresholds = [0.01, 0.001, 0.0005, 0.0001]
-    df_thr = evaluate_recall_at_fprs(labels_np, probs_np, fpr_thresholds)
-    # extract threshold for 0.001 as
-    threshold = df_thr.loc[df_thr.fpr_limit==0.01, "threshold"].item()
-        # now binarize at that threshold
-    preds_np = (probs_np >= threshold).astype(int)
-    # Confusion matrices at targeted FPR thresholds
+    # ---- FPR-constrained thresholds ----
+    fpr_limits = [0.01, 0.001, 0.0005, 0.0001]
+    df_limits, _ = thresholds_for_fpr_limits(labels_np, probs_np, fpr_limits)
+
+    # Choose one threshold to compute "main" metrics (example: use 1% FPR row)
+    main_thr = df_limits.loc[df_limits.fpr_limit == 0.01, "threshold"].item()
+    preds_np = (probs_np >= main_thr).astype(int)
+
     class_labels = class_names or ["non-fraud", "fraud"]
 
-    for _, row in df_thr.iterrows():
-        thr = row["threshold"]
-        fpr_lim = row["fpr_limit"]
+    # Log confusion matrices at each FPR limit with actual achieved FPR
+    for _, row in df_limits.iterrows():
+        thr = row.threshold
+        fpr_lim = row.fpr_limit
+        got_fpr = row.fpr
         y_pred_thr = (probs_np >= thr).astype(int)
         cm = confusion_matrix(labels_np, y_pred_thr, labels=[0,1])
 
         fig, ax = plt.subplots()
         disp = ConfusionMatrixDisplay(cm, display_labels=class_labels)
         disp.plot(ax=ax, cmap="Blues", values_format="d")
-        ax.set(
-        title=f"CM @ FPR≤{fpr_lim*100:.2f}% (thr={thr:.4f})"
-        )
+        ax.set(title=f"CM @ target FPR≤{fpr_lim*100:.2f}% (thr={thr:.6f})\nAchieved FPR={got_fpr*100:.4f}%, Recall={row.recall*100:.4f}%")
         key = f"confusion_matrix_fpr_{fpr_lim*100:.2f}pct"
         wandb.log({key: wandb.Image(fig)}, commit=False)
-    
-    accuracy = (preds_np == labels_np).mean().item()
+        plt.close(fig)
+
+    # Scalar metrics at main_thr
+    accuracy = (preds_np == labels_np).mean()
     precision, recall, f1, _ = precision_recall_fscore_support(
         labels_np, preds_np, average="binary", zero_division=0
     )
     class_acc = {
-      0: (preds_np[labels_np==0]==0).mean(),
-      1: (preds_np[labels_np==1]==1).mean(),
+        0: (preds_np[labels_np == 0] == 0).mean(),
+        1: (preds_np[labels_np == 1] == 1).mean(),
     }
     try:
         roc_auc = roc_auc_score(labels_np, probs_np)
@@ -296,42 +294,55 @@ def evaluate_binary(
     except ValueError:
         pr_auc = float("nan")
 
-    # Log scalar metrics
-
-    # Log ROC & PR curves
+    # ROC / PR curves
     roc_plot = wandb.plot.roc_curve(
-        y_true   = labels_np.tolist(),
-        y_probas = probas_2d.tolist(),
-        labels   = class_labels,
+        y_true=labels_np.tolist(),
+        y_probas=probas_2d.tolist(),
+        labels=class_labels,
     )
     pr_plot = wandb.plot.pr_curve(
-        y_true   = labels_np.tolist(),
-        y_probas = probas_2d.tolist(),
-        labels   = class_labels,
+        y_true=labels_np.tolist(),
+        y_probas=probas_2d.tolist(),
+        labels=class_labels,
     )
     wandb.log({"roc_curve": roc_plot, "pr_curve": pr_plot}, commit=False)
 
+    # Log scalar metrics + chosen threshold metrics + per-limit table
+    # Flatten df_limits rows into a dict (optional)
+    limit_logs = {}
+    for _, r in df_limits.iterrows():
+        tag = f"fpr_{r.fpr_limit:.6f}"
+        limit_logs[f"{tag}_thr"] = r.threshold
+        limit_logs[f"{tag}_achieved_fpr"] = r.fpr
+        limit_logs[f"{tag}_recall"] = r.recall
+        limit_logs[f"{tag}_tp"] = r.tp
+        limit_logs[f"{tag}_fp"] = r.fp
+        limit_logs[f"{tag}_fn"] = r.fn
+        limit_logs[f"{tag}_tn"] = r.tn
 
     wandb.log({
-        "val_loss":       val_loss,
-        "val_accuracy":   accuracy,
-        "val_precision":  precision,
-        "val_recall":     recall,
-        "val_f1":         f1,
-        "val_roc_auc":    roc_auc,
-        "val_pr_auc":     pr_auc,
+        "val_loss": val_loss,
+        "val_accuracy": accuracy,
+        "val_precision": precision,
+        "val_recall": recall,
+        "val_f1": f1,
+        "val_roc_auc": roc_auc,
+        "val_pr_auc": pr_auc,
         "val_non_fraud_acc": class_acc[0],
-        "val_fraud_acc": class_acc[1],  
-        }, commit=True)
+        "val_fraud_acc": class_acc[1],
+        "main_threshold_fpr01": main_thr,
+        **limit_logs
+    }, commit=True)
+
     model.train()
-    plt.close("all")
     return val_loss, {
-        "accuracy":    accuracy,
-        "precision":   precision,
-        "recall":      recall,
-        "f1":          f1,
-        "roc_auc":     roc_auc,
-        "pr_auc":      pr_auc,
+        "accuracy": accuracy,
+        "precision": precision,
+        "recall": recall,
+        "f1": f1,
+        "roc_auc": roc_auc,
+        "pr_auc": pr_auc,
         "class_acc_0": class_acc[0],
         "class_acc_1": class_acc[1],
-    } # type: ignore
+        "thresholds_table": df_limits 
+    }

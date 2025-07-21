@@ -352,7 +352,7 @@ class TransactionModel(nn.Module):
         super().__init__()
         self.cfg = cfg
 
-        # ── Embedding & field transformer ──────────────────────────────────
+        # -- Embedding & field transformer ----------------------------------
         self.embedder = EmbeddingLayer(
             cat_vocab=cfg.cat_vocab_sizes,
             cont_feats=cfg.cont_features,
@@ -362,20 +362,20 @@ class TransactionModel(nn.Module):
         )
         self.field_tf = FieldTransformer(cfg.ft_config)
 
-        # ── Row projection (flatten K·D → M) ───────────────────────────────
+        # -- Row projection (flatten K·D → M) -------------------------------
         self.num_fields = len(cfg.cat_vocab_sizes) + len(cfg.cont_features)
         self.row_proj   = nn.Linear(self.num_fields * cfg.ft_config.d_model,
                                     cfg.seq_config.d_model)
 
-        # ── Sequence transformer ───────────────────────────────────────────
+        # -- Sequence transformer -------------------------------------------
         self.seq_tf = SequenceTransformer(cfg.seq_config, max_len=cfg.window)
 
-        # ── Optional LSTM fraud head ───────────────────────────────────────
+        # -- Optional LSTM fraud head ---------------------------------------
         if self.cfg.lstm_config is not None:
             self.lstm_head = LSTMHead(self.cfg.lstm_config, input_size=cfg.seq_config.d_model)
         else:
             self.lstm_head = None
-        # ── Autoregressive heads (always present) ──────────────────────────
+        # -- Autoregressive heads (always present) --------------------------
         
         if self.cfg.mlp_config is not None:
             self.mlp_head = FraudHeadMLP(cfg.seq_config.d_model, self.cfg.mlp_config )
@@ -399,17 +399,17 @@ class TransactionModel(nn.Module):
         cont: Tensor,           # (B, L, F)
         mode: str = "fraud",    # 'fraud' | 'ar'
     ):
-        # ── 1) field-level attention ─────────────────────────────────────────
+        # -- 1) field-level attention -----------------------------------------
         field = self.embedder(cat, cont)          # (B·L, K, D)
         field = self.field_tf(field)              # (B·L, K, D)  (chunked if needed)
         field = field.flatten(1)                  # (B·L, K·D) concats all per-field embeddings into one vector per row
 
-        # ── 2) project row, then temporal transformer ───────────────────────
+        # -- 2) project row, then temporal transformer -----------------------
         B, L, _ = cat.shape
         row = self.row_proj(field).view(B, L, -1) # (B, L, M)
         seq = self.seq_tf(row)          # (B, L, M)
 
-        # ── 4) heads ────────────────────────────────────────────────────────
+        # -- 4) heads --------------------------------------------------------
         if mode == "lstm":
             if self.lstm_head is None:
                 raise RuntimeError("Fraud head not present (pre-train config).")
