@@ -51,11 +51,13 @@ def preprocess(
     group_key: str = "User",
     train_frac: float = 0.70,
     val_frac: float = 0.15,
-) -> Tuple[
-    pd.DataFrame,
-    pd.DataFrame,
-    pd.DataFrame,
-]:
+):
+# ) -> Tuple[
+#     pd.DataFrame,
+#     pd.DataFrame,
+#     pd.DataFrame,
+
+# ]:
     """Efficient vectorized preprocessing for transaction data."""
     # 1) Read only needed columns
     df = pd.read_csv(file)
@@ -84,6 +86,7 @@ def preprocess(
         else:
             df[c] = pd.to_numeric(df[c], downcast="float")
 
+
     # Sort chronologically
     df.sort_values(
         by=[group_key, "Year", "Month", "Day", "Hour"],
@@ -110,7 +113,14 @@ def preprocess(
     val_df   = subset("val")
     test_df  = subset("test")
     del df  # free RAM
-    return train_df, val_df, test_df
+    NUM_BINS = 20                     # e.g. 20 + 1(mask) classes
+    bin_edges = {}
+    for f in cont_features:
+        # equal‑frequency (quantile) bins
+        qs = np.linspace(0, 1, NUM_BINS + 1)
+        edges = np.quantile(train_df[f], qs)[1:-1]   # drop 0% and 100%
+        bin_edges[f] = edges.astype(np.float32)
+    return train_df, val_df, test_df, bin_edges
 
 cat_features = [
     "User",
@@ -131,7 +141,7 @@ cat_features = [
 cont_features = ["Amount"]
 
 print("Preprocessing starting")
-full_train_df, full_val_df, full_test_df = preprocess(Path("card_transaction.v1.csv"))
+full_train_df, full_val_df, full_test_df, bin_edges = preprocess(Path("card_transaction.v1.csv"))
 print("Preprocessing done")
 print("Getting scaler")
 
@@ -156,8 +166,8 @@ legit_train, legit_val, legit_test = [
 
 print("Saving")
 import torch
-torch.save((full_train_df, full_val_df, full_test_df, encoders, cat_features, cont_features, scaler), "full_processed.pt")
-torch.save((legit_train, legit_val, legit_test, encoders, cat_features, cont_features, scaler), "legit_processed.pt")
+torch.save((full_train_df, full_val_df, full_test_df, encoders, cat_features, cont_features, scaler, bin_edges), "bert_full_processed.pt")
+torch.save((legit_train, legit_val, legit_test, encoders, cat_features, cont_features, scaler, bin_edges), "bert_legit_processed.pt")
 
 
 

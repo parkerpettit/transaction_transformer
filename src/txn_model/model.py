@@ -46,8 +46,7 @@ class EmbeddingLayer(nn.Module):
         Dimension D of every field embedding / projection.
     dropout : float
         Dropout applied to each field embedding / projection.
-    padding_idx : int
-        Index used for PAD tokens in every categorical embedding.
+
 
     Input shapes
     ------------
@@ -65,16 +64,15 @@ class EmbeddingLayer(nn.Module):
         cont_feats: List[str],
         emb_dim: int,
         dropout: float,
-        padding_idx: int,
     ) -> None:
         super().__init__()
 
         # Categorical embeddings (ModuleList keeps order)
         self.cat_emb = nn.ModuleList(
-            [nn.Embedding(v, emb_dim, padding_idx=padding_idx) for v in cat_vocab.values()]
+            [nn.Embedding(v, emb_dim) for v in cat_vocab.values()]
         )
 
-        # Continuous projections 1→D (bias not needed; remove if you do want bias)
+        # Continuous projections 1->D (bias not needed; remove if you do want bias)
         self.cont_lin = nn.ModuleList(
             [nn.Linear(1, emb_dim, bias=False) for _ in cont_feats]
         )
@@ -247,8 +245,9 @@ class SequenceTransformer(nn.Module):
             norm_first=cfg.norm_first,
         )
         self.encoder = nn.TransformerEncoder(layer, num_layers=cfg.depth)
-        mask = torch.triu(torch.ones(max_len, max_len), diagonal=1).bool()  # (max_len, max_len)
-        self.register_buffer("causal_mask", mask, persistent=False)
+        # mask = torch.triu(torch.ones(max_len, max_len), diagonal=1).bool()  # (max_len, max_len)
+        # self.register_buffer("causal_mask", mask, persistent=False)
+
 
 
     def forward(self, x: Tensor) -> Tensor:  # (B, L, M)
@@ -347,7 +346,6 @@ class TransactionModel(nn.Module):
         Parameters
         ----------
         cfg      : ModelConfig
-        max_len  : override for maximum causal-mask length; if None uses cfg.window
         """
         super().__init__()
         self.cfg = cfg
@@ -358,7 +356,6 @@ class TransactionModel(nn.Module):
             cont_feats=cfg.cont_features,
             emb_dim=cfg.ft_config.d_model,       # emb_dim == ft.d_model (validated in cfg)
             dropout=cfg.emb_dropout,
-            padding_idx=cfg.padding_idx,
         )
         self.field_tf = FieldTransformer(cfg.ft_config)
 

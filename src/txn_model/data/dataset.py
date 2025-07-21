@@ -27,6 +27,7 @@ class TxnDataset(Dataset):
         group_by: str,          # e.g. "user_id"
         cat_features: List[str],
         cont_features: List[str],
+        bin_edges,
         window: int,
         stride: int = 1,
     ):
@@ -40,6 +41,13 @@ class TxnDataset(Dataset):
         self.labels   = np.ascontiguousarray(
             df["is_fraud"].values, dtype=np.int8
         )
+        cont_bins = []
+        for f in cont_features:
+            bins = np.digitize(df[f].values, bin_edges[f], right=False) + 1
+            # +1 so 0 stays free for the MASK token
+            cont_bins.append(bins.astype(np.int32))
+
+        self.cont_bin_arr = np.ascontiguousarray(np.stack(cont_bins, axis=1))
         self.window   = window
         self.stride   = stride
 
@@ -80,10 +88,11 @@ class TxnDataset(Dataset):
 
         cat_win  = torch.from_numpy(self.cat_arr[st:en]).long()
         cont_win = torch.from_numpy(self.cont_arr[st:en]).float()
+        cont_bin_win = torch.from_numpy(self.cont_bin_arr[st:en]).float()
         # label = last transaction in window
         label    = torch.tensor(int(self.labels[en - 1]), dtype=torch.long)
 
-        return {"cat": cat_win, "cont": cont_win, "label": label}
+        return {"cat": cat_win, "cont": cont_win, "contbin": cont_bin_win, "label": label}
 
 
 
@@ -96,6 +105,7 @@ def collate_fn(batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
     return {"cat": cats, "cont": conts, "label": labels}
 
 
+
 def slice_batch(batch):
     """
     Returns cat_input, cont_input, cat_target, cont_target, label
@@ -106,3 +116,32 @@ def slice_batch(batch):
         cat[:, -1],  cont[:, -1],   # targets
         label                            
     )
+
+def mask_batch(batch, mask_prob=0.15, row_prob=0.10):
+    cat, cont, cont_bin = batch["cat"], batch["cont"], batch["contbin"]
+
+    B,T,Fc = cat.shape
+    _,_,Fn = cont.shape
+    IGN = -100   # ignore index for CrossEntropy
+
+    # ---- categorical ----
+    cat_labels = cat.clone()
+    mcat = torch.rand_like(cat.float()) < mask_prob
+    mcat |= (torch.rand(B,T,1,device=cat.device) < row_prob)
+    cat[mcat] = 0
+    cat_labels[~mcat] = IGN
+
+    # ---- numerical ----
+    cont_labels = cont_bin.clone()
+    mnum = torch.rand_like(cont.float()) < mask_prob
+    mnum |= (torch.rand(B,T,1,device=cont.device) < row_prob)
+    cont[mnum]      = 0.0   # sentinel float (your embedder can learn a vector for it)
+    cont_bin[mnum]  = 0
+    cont_labels[~mnum] = IGN
+
+    batch.update(
+        cat=cat, cont=cont,
+        cat_labels=cat_labels,
+        cont_labels=cont_labels
+    )
+    return batch
