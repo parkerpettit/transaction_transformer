@@ -350,7 +350,7 @@ class TransactionModel(nn.Module):
         max_len  : override for maximum causal-mask length; if None uses cfg.window
         """
         super().__init__()
-        self.cfg = cfg
+        self.cfg: ModelConfig = cfg
 
         # -- Embedding & field transformer ----------------------------------
         self.embedder = EmbeddingLayer(
@@ -371,14 +371,13 @@ class TransactionModel(nn.Module):
         self.seq_tf = SequenceTransformer(cfg.seq_config, max_len=cfg.window)
 
         # -- Optional LSTM fraud head ---------------------------------------
-        if self.cfg.lstm_config is not None:
-            self.lstm_head = LSTMHead(self.cfg.lstm_config, input_size=cfg.seq_config.d_model)
-        else:
-            self.lstm_head = None
-        # -- Autoregressive heads (always present) --------------------------
-        
-        if self.cfg.mlp_config is not None:
-            self.mlp_head = FraudHeadMLP(cfg.seq_config.d_model, self.cfg.mlp_config )
+        self.lstm_head: nn.Module | None = None
+        if cfg.lstm_config is not None:
+            self.add_lstm_head(cfg.lstm_config)
+
+        self.mlp_head: nn.Module | None = None
+        if cfg.mlp_config is not None:
+            self.add_mlp_head(cfg.mlp_config)
 
         self.ar_dropout   = nn.Dropout(cfg.clf_dropout)
         self.ar_cat_head  = nn.Linear(cfg.seq_config.d_model,
@@ -388,6 +387,16 @@ class TransactionModel(nn.Module):
       
 
 
+    def add_lstm_head(self, lstm_cfg: LSTMConfig) -> None:
+        self.cfg.lstm_config = lstm_cfg
+        self.lstm_head = LSTMHead(lstm_cfg, input_size=self.cfg.seq_config.d_model)
+
+    def add_mlp_head(self, mlp_cfg: MLPConfig) -> None:
+        self.cfg.mlp_config = mlp_cfg
+        self.mlp_head = FraudHeadMLP(
+            emb_dim=self.cfg.seq_config.d_model,
+            cfg  = mlp_cfg,
+        )
 
 
 
@@ -410,19 +419,20 @@ class TransactionModel(nn.Module):
         seq = self.seq_tf(row)          # (B, L, M)
 
         # -- 4) heads --------------------------------------------------------
+         # -- heads ----------------------------------------------------------
         if mode == "lstm":
             if self.lstm_head is None:
-                raise RuntimeError("Fraud head not present (pre-train config).")
-            return self.lstm_head(seq)   # (B)
+                raise RuntimeError("No LSTM head attached.")
+            return self.lstm_head(seq)
 
-        elif mode == "mlp":
-            return self.mlp_head(seq[:, -1, :]).squeeze(dim=1)
-        elif mode == "ar":
-            h = seq[:, -1, :]                              # [B, M]
-            z = self.ar_dropout(h)                         # [B, M]
-            return self.ar_cat_head(z), self.ar_cont_head(z) 
-           
-        elif mode == "lightgbm":
-            return seq[:, -1, :] # shape (B, M)
-        else:
-            raise ValueError("mode must be 'fraud' or 'ar' or 'lightgbm' or 'linear' or 'mlp'")
+        if mode == "mlp":
+            if self.mlp_head is None:
+                raise RuntimeError("No MLP head attached.")
+            return self.mlp_head(seq[:, -1, :]).squeeze(1)
+
+        if mode == "ar":
+            h = seq[:, -1, :]
+            z = self.ar_dropout(h)
+            return self.ar_cat_head(z), self.ar_cont_head(z)
+
+        raise ValueError("mode must be 'ar', 'lstm', or 'mlp'")

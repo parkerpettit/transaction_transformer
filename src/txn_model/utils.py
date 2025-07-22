@@ -65,7 +65,7 @@ def save_ckpt(
 def load_ckpt(
     path: str | Path,
     device,
-) -> Tuple[nn.Module, float, int]:
+) -> Tuple[TransactionModel, float, int]:
     """
     Returns
     -------
@@ -102,11 +102,14 @@ def resume_finetune(
         for n,p in model.named_parameters():
             if not n.startswith("lstm_head"):
                 p.requires_grad = False
-
+            elif not n.startswith("mlp"):
+                p.requires_grad=False
+    for n, p in model.named_parameters():
+        print(n, p.requires_grad)
     # build Adam over only the grad‑true params (1 group)
     optim = torch.optim.Adam(
         filter(lambda p: p.requires_grad, model.parameters()),
-        lr=1e-3  # dummy—will be clobbered by load_state_dict
+        lr=1e-3  # dummy - will be overwritten by load_state_dict
     )
     optim.load_state_dict( ckpt["optim_state"] )
 

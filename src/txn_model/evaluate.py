@@ -1,11 +1,12 @@
 from typing import List, Dict, Tuple
 
+from click import progressbar
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import torch
 from torch import nn
-
+from tqdm.auto import tqdm
 from sklearn.metrics import (
     confusion_matrix,
     precision_recall_fscore_support,
@@ -38,13 +39,30 @@ def evaluate(
         Accuracy per categorical feature (0-1 range).
     """
     model.eval()
+    # progress bar format (reuse from pretrain)
+    bar_fmt = (
+        "{l_bar}{bar:25}| "
+        "{n_fmt}/{total_fmt} batches "
+        "({percentage:3.0f}%) | "
+        "elapsed: {elapsed} | ETA: {remaining} | "
+        "{rate_fmt} | "
+        "{postfix}"
+    )
 
     total_loss, total_samples = 0.0, 0
     feat_correct = [0] * len(cat_features)
     feat_total   = [0] * len(cat_features)
-
+    prog_bar = tqdm(
+    loader,
+    desc="Val-AR",
+    unit="batch",
+    total=len(loader),
+    ncols=200,
+    leave=True,
+    bar_format=bar_fmt
+    )
     sizes = [vocab_sizes[f] for f in cat_features]   # lens in the same order
-    for batch in loader:
+    for batch in prog_bar:
         # slice_batch = the helper you already have
         inp_cat, inp_cont, tgt_cat, tgt_cont, _ = slice_batch(batch)
         inp_cat, inp_cont = inp_cat.to(device), inp_cont.to(device)
@@ -72,13 +90,14 @@ def evaluate(
         batch_size   = inp_cat.size(0)
         total_loss    += loss.item() * batch_size
         total_samples += batch_size
+        prog_bar.set_postfix({"loss": f"{loss.item():.4f}"})
 
     avg_loss = total_loss / total_samples
     feat_acc = {
         name: (feat_correct[i] / feat_total[i]) if feat_total[i] else 0.0
         for i, name in enumerate(cat_features)
     }
-
+    
     print("\n▶ Feature-wise Accuracy:")
     for name, acc in feat_acc.items():
         print(f"  - {name:<20}: {acc*100:.2f}%")
@@ -222,13 +241,30 @@ def evaluate_binary(
     class_names: list[str] | None = None,
 ):
     model.eval()
+    # progress bar format (reuse from pretrain)
+    bar_fmt = (
+        "{l_bar}{bar:25}| "
+        "{n_fmt}/{total_fmt} batches "
+        "({percentage:3.0f}%) | "
+        "elapsed: {elapsed} | ETA: {remaining} | "
+        "{rate_fmt} | "
+        "{postfix}"
+    )
 
     tot_loss = 0.0
     tot_samples = 0
     all_probs: list[float] = []
     all_labels: list[int] = []
-
-    for batch in loader:
+    prog_bar = tqdm(
+    loader,
+    desc="Val-CLS",
+    unit="batch",
+    total=len(loader),
+    ncols=200,
+    leave=True,
+    bar_format=bar_fmt
+    )   
+    for batch in prog_bar:
         cat = batch["cat"][:, :-1].to(device)
         con = batch["cont"][:, :-1].to(device)
         labels = batch["label"].to(device).float()
@@ -244,7 +280,9 @@ def evaluate_binary(
 
         all_probs.extend(probs.cpu().tolist())
         all_labels.extend(labels_int.cpu().tolist())
-
+        prog_bar.set_postfix({"loss": f"{loss.item():.4f}",
+                        "pos":  f"{labels_int.sum().item():.0f}"})
+        
     val_loss = tot_loss / tot_samples
     labels_np = np.asarray(all_labels, dtype=np.int8)
     probs_np  = np.asarray(all_probs,  dtype=np.float32)
@@ -273,8 +311,19 @@ def evaluate_binary(
         disp.plot(ax=ax, cmap="Blues", values_format="d")
         ax.set(title=f"CM @ target FPR≤{fpr_lim*100:.2f}% (thr={thr:.6f})\nAchieved FPR={got_fpr*100:.4f}%, Recall={row.recall*100:.4f}%")
         key = f"confusion_matrix_fpr_{fpr_lim*100:.2f}pct"
-        wandb.log({key: wandb.Image(fig)}, commit=False)
+        wandb.log({key: wandb.Image(fig)}, commit=True)
         plt.close(fig)
+    
+    y_pred_thr = (probs_np >= 0.5).astype(int)
+    cm = confusion_matrix(labels_np, y_pred_thr, labels=[0,1])
+
+    fig, ax = plt.subplots()
+    disp = ConfusionMatrixDisplay(cm, display_labels=class_labels)
+    disp.plot(ax=ax, cmap="Blues", values_format="d")
+    ax.set(title=f"CM @ (thr={thr:.6f})")
+    key = f"confusion_matrix_0.5_threshold"
+    wandb.log({key: wandb.Image(fig)}, commit=True)
+    plt.close(fig)
 
     # Scalar metrics at main_thr
     accuracy = (preds_np == labels_np).mean()
@@ -305,7 +354,7 @@ def evaluate_binary(
         y_probas=probas_2d.tolist(),
         labels=class_labels,
     )
-    wandb.log({"roc_curve": roc_plot, "pr_curve": pr_plot}, commit=False)
+    wandb.log({"roc_curve": roc_plot, "pr_curve": pr_plot}, commit=True)
 
     # Log scalar metrics + chosen threshold metrics + per-limit table
     # Flatten df_limits rows into a dict (optional)
