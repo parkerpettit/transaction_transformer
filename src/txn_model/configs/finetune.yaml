@@ -1,7 +1,7 @@
 # I/O
 data_dir: data         # Root directory of raw or processed data
 
-head: mlp
+head: lstm
 # ------------- training loop hyper-parameters --------------------------------
 total_epochs: 50      # Number of training epochs
 batch_size:   120     # Batch size for training

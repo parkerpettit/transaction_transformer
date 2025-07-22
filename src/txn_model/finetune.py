@@ -9,7 +9,7 @@ import argparse, time, torch, torch.nn as nn
 from pathlib import Path
 from torch.utils.data import DataLoader
 from torch.optim.lr_scheduler import CosineAnnealingLR
-
+import numpy as np
 from config            import (LSTMConfig, MLPConfig)
 from data.dataset      import TxnDataset, collate_fn, slice_batch
 from evaluate   import evaluate_binary      # loss + acc per class
@@ -23,6 +23,7 @@ import torch.nn as nn
 import wandb
 from tqdm.auto import tqdm
 from utils import load_cfg, merge, load_ckpt, resume_finetune
+from torch.utils.data import WeightedRandomSampler
 def str2bool(v):
     if isinstance(v, bool): return v
     v = v.lower()
@@ -141,7 +142,7 @@ val_ds = TxnDataset(val_df, cat_features[0], cat_features, cont_features,
 # n_neg = counts.get(0, 0)
 # n_pos = counts.get(1, 0)
 # pos_weight = n_neg / n_pos
-pos_weight = 82.4213860812
+# pos_weight = 82.4213860812
 
 # print(f"negatives = {n_neg:,}, positives = {n_pos:,}, pos_weight = {pos_weight:.3f}")
 # Example usage:
@@ -149,11 +150,29 @@ pos_weight = 82.4213860812
 # count_txn_labels(dataset)
 
 print("Creating training loader")
+# 2) collect the label for each window (one pass through the dataset)
+#    this returns a Python list of 0/1 labels, length = len(train_dataset)
+sample_labels = [ int(train_ds[i]["label"].item()) 
+                  for i in range(len(train_ds)) ]
+
+# 3) compute class counts and per‑class weight
+counts = np.bincount(sample_labels)           # e.g. [#neg, #pos]
+class_weights = 1.0 / counts       # smaller class -> bigger weight
+
+# 4) assign each sample its weight
+sample_weights = [ class_weights[lbl] for lbl in sample_labels ]
+
+# 5) build the sampler
+sampler = WeightedRandomSampler(
+    weights=sample_weights,
+    num_samples=len(sample_weights),   # one "epoch" = same # of draws as original dataset
+    replacement=True                   # allow oversampling of the minority
+)
 
 train_loader = DataLoader(
     train_ds,
+    sampler=sampler,
     batch_size = args.batch_size,
-    shuffle=True,
     collate_fn = collate_fn,
 )
 
@@ -240,8 +259,8 @@ else:  # fresh fine‑tune from pretrained backbone
 # --------------------------------------------------------------------------- #
 #  loss
 # --------------------------------------------------------------------------- #
-pos_weight_tensor = torch.tensor(pos_weight, device=device)
-criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight_tensor)
+# pos_weight_tensor = torch.tensor(pos_weight, device=device)
+criterion = nn.BCEWithLogitsLoss()
 model.to(device)
 scheduler = CosineAnnealingLR(
 optim,
