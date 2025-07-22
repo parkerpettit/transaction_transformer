@@ -230,7 +230,7 @@ else:  # fresh fine‑tune from pretrained backbone
     for n, p in model.named_parameters():
         print(n, p.requires_grad)
     # 4) optimiser on trainable params only
-    optim = torch.optim.Adam(
+    optim = torch.optim.AdamW(
         filter(lambda p: p.requires_grad, model.parameters()),
         lr=args.lr,
     )

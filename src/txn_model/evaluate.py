@@ -320,7 +320,7 @@ def evaluate_binary(
     fig, ax = plt.subplots()
     disp = ConfusionMatrixDisplay(cm, display_labels=class_labels)
     disp.plot(ax=ax, cmap="Blues", values_format="d")
-    ax.set(title=f"CM @ (thr={thr:.6f})")
+    ax.set(title=f"CM @ threshold=0.5)")
     key = f"confusion_matrix_0.5_threshold"
     wandb.log({key: wandb.Image(fig)}, commit=True)
     plt.close(fig)

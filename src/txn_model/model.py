@@ -280,8 +280,6 @@ class LSTMHead(nn.Module):
             dropout=cfg.dropout
         )
 
-        self.dropout = nn.Dropout(cfg.dropout)
-
         self.fc = nn.Linear(cfg.hidden_size, 1)
 
     def forward(self, seq_out: Tensor) -> Tensor:
@@ -296,10 +294,9 @@ class LSTMHead(nn.Module):
         Returns
         -------
         logits : Tensor
-            Shape (B, num_classes) - unnormalized fraud classification logits
+            Shape (B,) - unnormalized fraud classification logits
         """
 
-        # If all sequences are same length, we can skip packing for efficiency
         embeddings, _ = self.lstm(seq_out)
         last_embedding = embeddings[:, -1, :] # (B, hidden_size)
         return self.fc(last_embedding).squeeze(dim=1)  # (B)

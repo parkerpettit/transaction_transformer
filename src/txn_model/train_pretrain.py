@@ -219,7 +219,7 @@ def main():
     vocab_sizes = list(cfg.cat_vocab_sizes.values()) # type: ignore
     crit_cat  = nn.CrossEntropyLoss(label_smoothing=0.1)
     crit_cont = nn.MSELoss()
-    optim     = torch.optim.Adam(model.parameters(), lr=args.lr)
+    optim     = torch.optim.AdamW(model.parameters(), lr=args.lr)
     if start_epoch >= args.total_epochs:
         raise IndexError("Start epoch from loaded model is greater than total epochs.")
         

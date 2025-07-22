@@ -92,7 +92,7 @@ def resume_finetune(
     path: Path,
     device: torch.device,
     unfreeze_backbone: bool = True
-) -> Tuple[TransactionModel, float, int, torch.optim.Adam]:
+) -> Tuple[TransactionModel, float, int, torch.optim.AdamW]:
     ckpt = torch.load(path, map_location=device, weights_only=False)
     cfg = ckpt["config"]
     model = TransactionModel(cfg).to(device)
@@ -106,8 +106,8 @@ def resume_finetune(
                 p.requires_grad=False
     for n, p in model.named_parameters():
         print(n, p.requires_grad)
-    # build Adam over only the grad‑true params (1 group)
-    optim = torch.optim.Adam(
+    # build AdamW over only the grad‑true params (1 group)
+    optim = torch.optim.AdamW(
         filter(lambda p: p.requires_grad, model.parameters()),
         lr=1e-3  # dummy - will be overwritten by load_state_dict
     )
