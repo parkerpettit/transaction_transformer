@@ -34,7 +34,6 @@ class ModelConfig:
     lstm_config:     Optional[LSTMConfig] = None
     emb_dropout:     float                = 0.1
     clf_dropout:     float                = 0.1
-    padding_idx:     int                  = 0
     total_epochs:    int                  = 10
     window:          int                  = 10
     stride:          int                  = 5

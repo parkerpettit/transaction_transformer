@@ -35,7 +35,7 @@ mlp_dropout: 0.1
 
 unfreeze:  True               
 
-# lstm_hidden:  0
-# lstm_layers:  0
-# lstm_classes: 0
-# lstm_dropout: 0
+lstm_hidden:  792
+lstm_layers:  1
+lstm_classes: 1
+lstm_dropout: 0

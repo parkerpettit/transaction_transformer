@@ -103,7 +103,7 @@ def resume_finetune(
             if not n.startswith("lstm_head"):
                 p.requires_grad = False
 
-    # build Adam over only the grad‑true params (1 group)
+    # build Adam over only the grad -true params (1 group)
     optim = torch.optim.Adam(
         filter(lambda p: p.requires_grad, model.parameters()),
         lr=1e-3  # dummy—will be clobbered by load_state_dict
@@ -123,8 +123,10 @@ def load_cfg(path: str | pathlib.Path) -> dict:
     with open(path, "r") as f:
         return yaml.safe_load(f)
 
-def merge(cli_args: argparse.Namespace, file_dict: dict) -> argparse.Namespace:
-    """File values are defaults; CLI flags override if given."""
-    merged = vars(cli_args).copy()
-    merged = {k: (v if v is not None else file_dict.get(k)) for k, v in merged.items()}
-    return argparse.Namespace(**merged)
+def merge(cli: argparse.Namespace, yaml_cfg: dict) -> argparse.Namespace:
+    out = vars(cli).copy()
+    # (1) add YAML defaults for anything not on the CLI
+    for k, v in yaml_cfg.items():
+        if k not in out or out[k] is None:
+            out[k] = v
+    return argparse.Namespace(**out)

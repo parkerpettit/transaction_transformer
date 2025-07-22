@@ -251,10 +251,8 @@ class SequenceTransformer(nn.Module):
 
 
     def forward(self, x: Tensor) -> Tensor:  # (B, L, M)
-        L = x.size(1)
-        causal = self.causal_mask[:L, :L] # type: ignore
         x = self.pos_enc(x)
-        return self.encoder(x, mask=causal)
+        return self.encoder(x)
 
 
 # -------------------------------------------------------------------------------------- #
@@ -349,7 +347,7 @@ class TransactionModel(nn.Module):
         """
         super().__init__()
         self.cfg = cfg
-
+        field_sizes = list(cfg.cat_vocab_sizes.values()) +  [21]
         # -- Embedding & field transformer ----------------------------------
         self.embedder = EmbeddingLayer(
             cat_vocab=cfg.cat_vocab_sizes,
@@ -376,25 +374,38 @@ class TransactionModel(nn.Module):
         
         if self.cfg.mlp_config is not None:
             self.mlp_head = FraudHeadMLP(cfg.seq_config.d_model, self.cfg.mlp_config )
+        self.mlm_head_layers = nn.ModuleList(
+            [nn.Linear(cfg.seq_config.d_model, V, bias=False) for V in field_sizes]
+        )
 
-        self.ar_dropout   = nn.Dropout(cfg.clf_dropout)
-        self.ar_cat_head  = nn.Linear(cfg.seq_config.d_model,
-                                      sum(cfg.cat_vocab_sizes.values()))
-        self.ar_cont_head = nn.Linear(cfg.seq_config.d_model, len(cfg.cont_features))
-
-      
-
-
-
+    def apply_mlm_heads(self, seq_masked: torch.Tensor) -> list[torch.Tensor]:
+        """
+        Run each field - specific Linear head on the masked rows only.
+        seq_masked: (N_masked, d_model)
+        returns:    list[Tensor], one item per field, each (N_masked, V_f)
+        """
+        return [head(seq_masked) for head in self.mlm_head_layers]
 
 
 
+    # ------------------------------------------------------------
+    def encode(self, cat: LongTensor, cont: Tensor) -> torch.Tensor:
+        """
+        Return (B*L, d_model) row representations with NO masking.
+        Used by the training loop to build per -field logits on demand.
+        """
+        field = self.embedder(cat, cont)          # (B·L, K, D)
+        field = self.field_tf(field).flatten(1)   # (B·L, K·D)
+        B, L, _ = cat.shape
+        rows = self.row_proj(field).view(B, L, -1)
+        seq  = self.seq_tf(rows)                  # (B, L, d)
+        return seq.reshape(-1, seq.size(-1))      # (B*L, d)
     # --------------------------------------------------------------------- #
     def forward(
         self,
         cat: LongTensor,        # (B, L, C)
         cont: Tensor,           # (B, L, F)
-        mode: str = "fraud",    # 'fraud' | 'ar'
+        row_mask=None
     ):
         # -- 1) field-level attention -----------------------------------------
         field = self.embedder(cat, cont)          # (B·L, K, D)
@@ -407,19 +418,11 @@ class TransactionModel(nn.Module):
         seq = self.seq_tf(row)          # (B, L, M)
 
         # -- 4) heads --------------------------------------------------------
-        if mode == "lstm":
-            if self.lstm_head is None:
-                raise RuntimeError("Fraud head not present (pre-train config).")
-            return self.lstm_head(seq)   # (B)
+        seq_flat = seq.reshape(-1, seq.size(-1))   # (B*L, d)
+        if row_mask is None:
+            raise ValueError("row_mask required for mode='mlm'")
+        row_mask_flat = row_mask.reshape(-1)       # (B*L,)
 
-        elif mode == "mlp":
-            return self.mlp_head(seq[:, -1, :]).squeeze(dim=1)
-        elif mode == "ar":
-            h = seq[:, -1, :]                              # [B, M]
-            z = self.ar_dropout(h)                         # [B, M]
-            return self.ar_cat_head(z), self.ar_cont_head(z) 
-           
-        elif mode == "lightgbm":
-            return seq[:, -1, :] # shape (B, M)
-        else:
-            raise ValueError("mode must be 'fraud' or 'ar' or 'lightgbm' or 'linear' or 'mlp'")
+        seq_masked = seq_flat[row_mask_flat]       # (~0.15*B*L, d)
+        logits = self.apply_mlm_heads(seq_masked)  # list[(N_masked, V_f)]
+        return logits

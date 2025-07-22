@@ -16,6 +16,95 @@ from sklearn.metrics import (
 
 import wandb
 from data.dataset import slice_batch
+# evaluate_mlm.py
+# --------------------------------------------------------------------------
+# Masked -LM validation helper
+#
+# • Works with the collate_mlm() batches:
+#     batch["cat"]        – categorical inputs  (B,T,F_cat)
+#     batch["cont"]       – float inputs        (B,T,F_num)
+#     batch["cat_labels"] – int   labels        (B,T,F_cat)  ( -100 where un -masked)
+#     batch["cont_labels"]– int   labels        (B,T,F_num)  ( -100 where un -masked)
+#
+# • Model must return `logits` shaped (B,T, ΣV_all) where all categorical
+#   vocabularies and numeric -bin vocabularies are concatenated.
+#
+# • `field_sizes` is that same list of vocabulary/bin sizes in concat order.
+# --------------------------------------------------------------------------
+from typing import List, Dict, Any
+
+import torch
+import torch.nn as nn
+import wandb
+
+@torch.no_grad()
+def evaluate_mlm(
+    model: nn.Module,
+    loader: torch.utils.data.DataLoader,
+    field_sizes: List[int],            # [V_cat₁, V_cat₂, …, B_num₁, B_num₂ …]
+    device: torch.device,
+) -> Dict[str, Any]:
+    """Returns a dict with val_loss and token -level accuracy; logs to W&B."""
+
+    crit = nn.CrossEntropyLoss(ignore_index=-100, reduction="sum")
+    model.eval()
+
+    total_loss   = 0.0
+    total_tokens = 0
+    correct_tok  = 0
+
+    # per -field accuracy bookkeeping
+    field_correct = [0] * len(field_sizes)
+    field_tokens  = [0] * len(field_sizes)
+
+    for batch in loader:
+        cat  = batch["cat"].to(device)
+        cont = batch["cont"].to(device)
+
+        lab_cat  = batch["cat_labels"].to(device)
+        lab_cont = batch["cont_labels"].to(device)
+        labels_all = torch.cat((lab_cat, lab_cont), dim=-1)   # (B,T,F_total)
+
+        logits = model(cat, cont, mode="mlm")                 # (B,T, ΣV)
+
+        start = 0
+        for f, V in enumerate(field_sizes):
+            end    = start + V
+            log_f  = logits[..., start:end].reshape(-1, V)     # [(B*T), V]
+            lab_f  = labels_all[..., f].reshape(-1)            # [(B*T)]
+
+            # accumulate CE loss (already summed by crit)
+            total_loss += crit(log_f, lab_f).item()
+
+            # token mask (positions that were actually masked)
+            mask = lab_f != -100
+            n_tok_f = mask.sum().item()
+            if n_tok_f:
+                pred_f = log_f.argmax(dim=1)
+                correct = (pred_f[mask] == lab_f[mask]).sum().item()
+                correct_tok      += correct
+                total_tokens     += n_tok_f
+                field_correct[f] += correct
+                field_tokens[f]  += n_tok_f
+            start = end
+
+    val_loss = total_loss / max(total_tokens, 1)
+    token_acc = correct_tok / max(total_tokens, 1)
+
+    field_acc = {
+        f"field_{i}": (field_correct[i] / field_tokens[i]) if field_tokens[i] else 0.0
+        for i in range(len(field_sizes))
+    }
+
+    # ------------- W&B logging -----------------
+    wandb.log({
+        "val_loss":            val_loss,
+        "val_token_accuracy":  token_acc,
+        **{f"val_{k}_acc": v for k, v in field_acc.items()}
+    }, commit=False)
+
+    model.train()
+    return {"val_loss": val_loss, "token_acc": token_acc, **field_acc}
 
 @torch.no_grad()
 def evaluate(
@@ -177,7 +266,7 @@ def thresholds_for_fpr_limits(y_true: np.ndarray,
     fpr = fp / total_neg if total_neg else np.zeros_like(fp, dtype=float)
     thresholds = scores_sorted[block_idx]
 
-    # fpr is non‑decreasing w.r.t. lowering threshold
+    # fpr is non -decreasing w.r.t. lowering threshold
     df_curve = pd.DataFrame({
         "threshold": thresholds,
         "fpr": fpr,
