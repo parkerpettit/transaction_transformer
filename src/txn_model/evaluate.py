@@ -14,32 +14,33 @@ from sklearn.metrics import (
     average_precision_score,
     ConfusionMatrixDisplay,
 )
-
+from utils import show_samples_mlm
 import wandb
-from data.dataset import slice_batch
+from data.dataset import mask_batch
 
 @torch.no_grad()
 def evaluate(
-    model: nn.Module,
+    model: torch.nn.Module,
     loader: torch.utils.data.DataLoader,
     cat_features: List[str],          # names in the same order you sliced tgt_cat
-    vocab_sizes: Dict[str, int],   # {feature_name: vocab_len}
-    crit_cat: nn.Module,           # e.g. nn.CrossEntropyLoss()
-    crit_cont: nn.Module,          # e.g. nn.MSELoss()
+    cont_features: List[str],         # names of your continuous fields
+    vocab_sizes: Dict[str, int],      # {feature_name: vocab_len}
+    crit_cat: torch.nn.Module,        # e.g. nn.CrossEntropyLoss(ignore_index=-100)
+    crit_cont: torch.nn.Module,       # e.g. nn.MSELoss()
     device: torch.device,
+    enc: Dict,
 ) -> Tuple[float, Dict[str, float]]:
     """
-    Validate once over `loader`.
+    Validate once over `loader` using an MLM objective.
 
     Returns
     -------
     avg_loss : float
-        Mean loss (categorical + continuous) over all samples.
+        Mean MLM loss (cat + cont) per masked token/field.
     feat_acc : dict[str, float]
-        Accuracy per categorical feature (0-1 range).
+        Accuracy per categorical feature, computed only on masked positions.
     """
     model.eval()
-    # progress bar format (reuse from pretrain)
     bar_fmt = (
         "{l_bar}{bar:25}| "
         "{n_fmt}/{total_fmt} batches "
@@ -49,62 +50,99 @@ def evaluate(
         "{postfix}"
     )
 
-    total_loss, total_samples = 0.0, 0
+    total_loss, total_masks = 0.0, 0
     feat_correct = [0] * len(cat_features)
     feat_total   = [0] * len(cat_features)
+    sizes = [vocab_sizes[f] for f in cat_features]
+
     prog_bar = tqdm(
-    loader,
-    desc="Val-AR",
-    unit="batch",
-    total=len(loader),
-    ncols=200,
-    leave=True,
-    bar_format=bar_fmt
+        loader,
+        desc="Val-MLM",
+        unit="batch",
+        total=len(loader),
+        ncols=200,
+        leave=True,
+        bar_format=bar_fmt,
     )
-    sizes = [vocab_sizes[f] for f in cat_features]   # lens in the same order
+
+    first_batch = True
     for batch in prog_bar:
-        # slice_batch = the helper you already have
-        inp_cat, inp_cont, tgt_cat, tgt_cont, _ = slice_batch(batch)
-        inp_cat, inp_cont = inp_cat.to(device), inp_cont.to(device)
-        tgt_cat, tgt_cont = tgt_cat.to(device), tgt_cont.to(device)
+        # 1) get raw sequences
+        cat_input  = batch["cat"].to(device)    # (B, L, F_cat)
+        cont_input = batch["cont"].to(device)   # (B, L, F_cont)
 
-        logits_cat, pred_cont = model(inp_cat, inp_cont, mode="ar")
+        # 2) mask
+        inp_cat, inp_cont, lbl_cat, lbl_cont, mask_cat, mask_cont = mask_batch(
+            cat_input, cont_input,
+            padding_idx=0,
+            mask_prob=0.15,
+        )
 
-        # ----- compute loss & per-feature accuracy -----
-        start, loss_cat = 0, 0.0
+        # 3) forward
+        logits_cat, pred_cont = model(inp_cat, inp_cont, mode="mlm")
+
+        # 4) loss
+        B, L, _      = logits_cat.shape
+        logits_flat  = logits_cat.view(B*L, -1)
+        labels_flat  = lbl_cat.view(B*L)
+        loss_cat     = crit_cat(logits_flat, labels_flat)
+
+        masked_pred_cont = pred_cont[mask_cont]
+        masked_lbl_cont  = lbl_cont[mask_cont]
+        if masked_pred_cont.numel() > 0:
+            loss_cont = crit_cont(masked_pred_cont, masked_lbl_cont)
+        else:
+            loss_cont = torch.tensor(0.0, device=device)
+
+        masks_this = int(mask_cat.sum() + mask_cont.sum())
+        loss = (loss_cat + loss_cont) / masks_this
+
+        # 5) accumulate
+        total_loss  += loss.item() * masks_this
+        total_masks += masks_this
+
+        # 6) per-feature acc
+        start = 0
         for i, V in enumerate(sizes):
-            end        = start + V
-            logits_f   = logits_cat[:, start:end]        # [B, V_i]
-            targets_f  = tgt_cat[:, i]                   # [B]
-            loss_cat  += crit_cat(logits_f, targets_f)
+            end      = start + V
+            logits_f = logits_cat[:, :, start:end]   # (B, L, Vᵢ)
+            preds_f  = logits_f.argmax(dim=2)        # (B, L)
+            targets_f= lbl_cat[:, :, i]              # (B, L)
+            mask_f   = mask_cat[:, :, i]             # (B, L)
 
-            preds_f     = logits_f.argmax(dim=1)
-            feat_correct[i] += (preds_f == targets_f).sum().item()
-            feat_total[i]   += targets_f.numel()
+            if mask_f.any():
+                feat_correct[i] += (preds_f[mask_f] == targets_f[mask_f]).sum().item()
+                feat_total[i]   += int(mask_f.sum())
             start = end
 
-        loss_cont = crit_cont(pred_cont, tgt_cont)
-        loss = (loss_cat + loss_cont) / (len(vocab_sizes) + 1 )
-
-        
-        batch_size   = inp_cat.size(0)
-        total_loss    += loss.item() * batch_size
-        total_samples += batch_size
         prog_bar.set_postfix({"loss": f"{loss.item():.4f}"})
 
-    avg_loss = total_loss / total_samples
+        # 7) show samples on first batch only
+        if first_batch:
+            show_samples_mlm(
+                inp_cat, logits_cat, mask_cat, lbl_cat,
+                inp_cont, pred_cont, mask_cont, lbl_cont,
+                cat_features, cont_features, enc,
+                n=3
+            )
+            first_batch = False
+
+    # finalize
+    avg_loss = total_loss / total_masks
     feat_acc = {
         name: (feat_correct[i] / feat_total[i]) if feat_total[i] else 0.0
         for i, name in enumerate(cat_features)
     }
-    
-    print("\n▶ Feature-wise Accuracy:")
+
+    # prints like before
+    print("\n▶ Feature-wise Accuracy (on masked tokens):")
     for name, acc in feat_acc.items():
-        print(f"  - {name:<20}: {acc*100:.2f}%")
+        print(f"  - {name:<20}: {acc*100:5.2f}%")
     print(f"  └- Avg Val Loss: {avg_loss:.4f}\n")
 
-    model.train()           # restore training mode
+    model.train()
     return avg_loss, feat_acc
+
 
 
 

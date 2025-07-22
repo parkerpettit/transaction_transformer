@@ -11,7 +11,7 @@ from pathlib import Path
 from torch.utils.data import DataLoader
 
 from config            import (ModelConfig, TransformerConfig)
-from data.dataset      import TxnDataset, collate_fn, slice_batch
+from data.dataset      import TxnDataset, collate_fn, mask_batch
 # from data.preprocessing import preprocess
 from model import TransactionModel
 from evaluate          import evaluate            # per-feature val metrics
@@ -145,8 +145,7 @@ def main():
         # print("Processed data saved.")
     print("Creating training loader")
     train_loader = DataLoader(
-        TxnDataset(train_df, cat_features[0], cat_features, cont_features,
-                args.window, args.stride),
+        TxnDataset(train_df, cat_features[0], cat_features, cont_features, args.window, args.stride),
         batch_size=args.batch_size, shuffle=True, collate_fn=collate_fn, num_workers=0, pin_memory=True)
 
     print("Creating validation loader")
@@ -251,43 +250,63 @@ def main():
             
             model.train()
             tot_loss = 0
-            epoch_sample_count = 0
+            tot_count = 0
             t0 = time.perf_counter()
             batch_idx = 0
 
             for batch in prog_bar:
-                cat_input, cont_inp, cat_tgt, cont_tgt, _ = (t.to(device) for t in slice_batch(batch))
-                cat_logits, cont_pred = model(cat_input, cont_inp, mode="ar")
+                cat_input, cont_input = batch["cat"].to(device), batch["cont"].to(device)
+                
 
-                # categorical losses field-wise
-                start = 0
-                loss_cat = 0
-                for i, vocab_len in enumerate(vocab_sizes):
-                    loss_cat += crit_cat(cat_logits[:, start:start+vocab_len], cat_tgt[:, i])
-                    start += vocab_len
-                loss_cont = crit_cont(cont_pred, cont_tgt)
-                # loss_cat /= len(vocab_sizes) # average cat loss across number of categories
-                # only one continuous feature, give each head equal weight
-                loss = (loss_cat + loss_cont) / (len(vocab_sizes) + 1 )
-                wandb.log({"training_loss": loss.item()})
+                inp_cat, inp_cont, lbl_cat, lbl_cont, mask_cat, mask_cont = mask_batch(
+                                                                            cat_input, cont_input,
+                                                                            padding_idx=0,
+                                                                            mask_prob=0.15)
+                
+                logits_cat, pred_cont = model(inp_cat, inp_cont, mode="mlm")
+                                # 3) compute categorical loss with ignore_index
+                #    reshape to (B*L, ΣV_i) and (B*L,)
+                B, L, _ = logits_cat.shape
+                logits_flat = logits_cat.view(B*L, -1)
+                labels_flat = lbl_cat.view(B*L)
+                loss_cat = crit_cat(logits_flat, labels_flat)
+
+                # 4) continuous MSE only on masked positions
+                masked_pred_cont = pred_cont[mask_cont]
+                masked_lbl_cont  = lbl_cont[mask_cont]
+                if masked_pred_cont.numel() > 0:
+                    loss_cont = crit_cont(masked_pred_cont, masked_lbl_cont)
+                else:
+                    loss_cont = torch.tensor(0.0, device=device)
+
+                # 5) combine & step
+                #    Normalize by total masked tokens
+                total_masks = mask_cat.sum() + mask_cont.sum()
+                loss = (loss_cat + loss_cont) / total_masks.clamp(min=1)
                 optim.zero_grad()
                 loss.backward()
                 optim.step()
-                batch_size = cat_input.size(0)
-                tot_loss += loss.item() * batch_size
-                epoch_sample_count += batch_size
 
+                tot_loss  += loss.item() * total_masks.item()
+                tot_count += total_masks.item()
                 prog_bar.set_postfix({
-                    "tot":  f"{loss.item():.4f}",
-                    "cat":  f"{loss_cat.item():.4f}", # type: ignore
-                    "cont": f"{loss_cont.item():.4f}",
-                })
-            train_loss = tot_loss / epoch_sample_count
-           
+                "tot":  f"{loss.item():.4f}",
+                "cat":  f"{loss_cat.item():.4f}", # type: ignore
+                "cont": f"{loss_cont.item():.4f}",
+            })    
+            avg_train_loss = tot_loss / tot_count
+            print(f"Epoch {ep+1} train MLM loss {avg_train_loss:.4f}")
+            wandb.log({"training_loss": avg_train_loss})
+
+       
+
+
+
 
             val_loss, feat_acc = evaluate(model, val_loader, cat_features,
-                                        {f: len(enc[f]["inv"]) for f in cat_features},
-                                        crit_cat, crit_cont, device)
+            {f: len(enc[f]["inv"]) for f in cat_features},  cont_features, # type: ignore
+            crit_cat, crit_cont, device, enc)
+
             t1 = time.perf_counter()
             time_elapsed = (t1 - t0) / 60
             wandb.log({
@@ -298,7 +317,7 @@ def main():
             "epoch_time_min": time_elapsed,
             }, commit=True)
             print(f"Epoch {ep+1:02}/{args.total_epochs} "
-                f"| train {train_loss:.4f}  val {val_loss:.4f} "
+                f"| train {avg_train_loss:.4f}  val {val_loss:.4f} "
                 f"| Time to complete epoch: {time_elapsed:2f} minutes")
             
             if val_loss < best_val - 1e-5:  
@@ -318,23 +337,7 @@ def main():
                     break
                 else:
                     ep_without_improvement += 1
-            # after computing preds for this batch
-            if batch_idx == 0:   # print only from the first batch to avoid spam
-                # gather predictions in the same per-feature layout used for accuracy
-                start = 0
-                preds_cat = torch.empty_like(cat_tgt)
-                for i, V in enumerate(vocab_sizes):
-                    end = start + V
-                    preds_cat[:, i] = cat_logits[:, start:end].argmax(dim=1)
-                    start = end
-
-                show_samples(
-                    cat_input, cat_tgt, preds_cat,
-                    cont_tgt,  cont_pred,
-                    enc, cat_features, cont_features,
-                    n=1
-                )
-            batch_idx += 1
+        
 
 
                     

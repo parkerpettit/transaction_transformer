@@ -231,7 +231,7 @@ class SinCosPositionalEncoding(nn.Module):
 
 
 class SequenceTransformer(nn.Module):
-    """Causal Transformer encoder over the temporal dimension."""
+    """Bidirectional Transformer encoder over the temporal dimension."""
 
     def __init__(self, cfg: TransformerConfig, max_len: int = 256):
         super().__init__()
@@ -247,15 +247,11 @@ class SequenceTransformer(nn.Module):
             norm_first=cfg.norm_first,
         )
         self.encoder = nn.TransformerEncoder(layer, num_layers=cfg.depth)
-        mask = torch.triu(torch.ones(max_len, max_len), diagonal=1).bool()  # (max_len, max_len)
-        self.register_buffer("causal_mask", mask, persistent=False)
 
 
     def forward(self, x: Tensor) -> Tensor:  # (B, L, M)
-        L = x.size(1)
-        causal = self.causal_mask[:L, :L] # type: ignore
         x = self.pos_enc(x)
-        return self.encoder(x, mask=causal)
+        return self.encoder(x)
 
 
 # -------------------------------------------------------------------------------------- #
@@ -367,35 +363,10 @@ class TransactionModel(nn.Module):
         # -- Sequence transformer -------------------------------------------
         self.seq_tf = SequenceTransformer(cfg.seq_config, max_len=cfg.window)
 
-        # -- Optional LSTM fraud head ---------------------------------------
-        self.lstm_head: nn.Module | None = None
-        if cfg.lstm_config is not None:
-            self.add_lstm_head(cfg.lstm_config)
-
-        self.mlp_head: nn.Module | None = None
-        if cfg.mlp_config is not None:
-            self.add_mlp_head(cfg.mlp_config)
-
-        self.ar_dropout   = nn.Dropout(cfg.clf_dropout)
-        self.ar_cat_head  = nn.Linear(cfg.seq_config.d_model,
+        self.mlm_dropout   = nn.Dropout(cfg.clf_dropout)
+        self.mlm_cat_head  = nn.Linear(cfg.seq_config.d_model,
                                       sum(cfg.cat_vocab_sizes.values()))
-        self.ar_cont_head = nn.Linear(cfg.seq_config.d_model, len(cfg.cont_features))
-
-      
-
-
-    def add_lstm_head(self, lstm_cfg: LSTMConfig) -> None:
-        self.cfg.lstm_config = lstm_cfg
-        self.lstm_head = LSTMHead(lstm_cfg, input_size=self.cfg.seq_config.d_model)
-
-    def add_mlp_head(self, mlp_cfg: MLPConfig) -> None:
-        self.cfg.mlp_config = mlp_cfg
-        self.mlp_head = FraudHeadMLP(
-            emb_dim=self.cfg.seq_config.d_model,
-            cfg  = mlp_cfg,
-        )
-
-
+        self.mlm_cont_head = nn.Linear(cfg.seq_config.d_model, len(cfg.cont_features))
 
 
     # --------------------------------------------------------------------- #
@@ -417,19 +388,7 @@ class TransactionModel(nn.Module):
 
         # -- 4) heads --------------------------------------------------------
          # -- heads ----------------------------------------------------------
-        if mode == "lstm":
-            if self.lstm_head is None:
-                raise RuntimeError("No LSTM head attached.")
-            return self.lstm_head(seq)
-
-        if mode == "mlp":
-            if self.mlp_head is None:
-                raise RuntimeError("No MLP head attached.")
-            return self.mlp_head(seq[:, -1, :]).squeeze(1)
-
-        if mode == "ar":
-            h = seq[:, -1, :]
-            z = self.ar_dropout(h)
-            return self.ar_cat_head(z), self.ar_cont_head(z)
-
-        raise ValueError("mode must be 'ar', 'lstm', or 'mlp'")
+        if mode == "mlm":
+            logits_cat  = self.mlm_cat_head(seq)    # (B, L, sum(V_i))
+            preds_cont  = self.mlm_cont_head(seq)   # (B, L, F_cont)
+            return logits_cat, preds_cont

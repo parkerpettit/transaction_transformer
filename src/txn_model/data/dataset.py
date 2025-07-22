@@ -106,3 +106,36 @@ def slice_batch(batch):
         cat[:, -1],  cont[:, -1],   # targets
         label                            
     )
+
+
+
+
+def mask_batch(cat, cont, padding_idx, mask_prob=0.15):
+    """
+    cat:  (B, L, C) integer token IDs
+    cont: (B, L, F) floats
+
+    Returns:
+      inp_cat, inp_cont,
+      label_cat, label_cont,
+      mask_cat, mask_cont
+    """
+    device = cat.device
+    # 1) sample masks
+    mask_cat  = torch.rand(cat.shape,  device=device) < mask_prob
+    mask_cont = torch.rand(cont.shape, device=device) < mask_prob
+
+    # 2) labels: original values where masked, ignore elsewhere
+    label_cat  = cat.clone()
+    label_cat[~mask_cat] = -100      # CrossEntropyLoss ignore_index
+    label_cont = cont.clone()
+    # we’ll index into cont, so no need for ignore; will select only mask_cont
+
+    # 3) inputs: replace masked categories with padding_idx,
+    #    cont with zero (or mean)
+    inp_cat  = cat.clone()
+    inp_cat[mask_cat] = padding_idx
+    inp_cont = cont.clone()
+    inp_cont[mask_cont] = 0.0        # or cont.mean()
+
+    return inp_cat, inp_cont, label_cat, label_cont, mask_cat, mask_cont

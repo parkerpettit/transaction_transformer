@@ -20,6 +20,7 @@ from typing import List, Tuple
 from model import TransactionModel
 import torch
 from torch import nn, optim
+from typing import List, Dict, Tuple
 
 from config import ModelConfig   # only for typing / pretty storage
 
@@ -131,3 +132,77 @@ def merge(cli_args: argparse.Namespace, file_dict: dict) -> argparse.Namespace:
     merged = vars(cli_args).copy()
     merged = {k: (v if v is not None else file_dict.get(k)) for k, v in merged.items()}
     return argparse.Namespace(**merged)
+
+
+import torch
+
+def show_samples_mlm(
+    inp_cat: torch.Tensor,      # [B, L, F_cat] masked inputs
+    logits_cat: torch.Tensor,   # [B, L, ΣVᵢ] raw logits over all cat features
+    mask_cat: torch.Tensor,     # [B, L, F_cat] bool mask of which cat slots were masked
+    tgt_cat: torch.Tensor,      # [B, L, F_cat] original cat labels (before masking)
+    inp_cont: torch.Tensor,     # [B, L, F_cont] masked cont inputs
+    pred_cont: torch.Tensor,    # [B, L, F_cont] model’s cont predictions
+    mask_cont: torch.Tensor,    # [B, L, F_cont] bool mask of which cont slots were masked
+    tgt_cont: torch.Tensor,     # [B, L, F_cont] original cont labels (before masking)
+    cat_features: List[str],
+    cont_features: List[str],
+    enc: Dict[str, Dict[str, list]],
+    n: int = 3
+):
+    """
+    Print up to `n` samples' predictions vs. targets for all masked slots.
+
+    Args:
+      inp_cat     Tensor[B,L,F_cat]    - masked categorical inputs
+      logits_cat  Tensor[B,L,ΣVᵢ]      - raw logits for all cat features
+      mask_cat    BoolTensor[B,L,F_cat]- which cat slots were masked
+      tgt_cat     Tensor[B,L,F_cat]    - original cat values
+      inp_cont    Tensor[B,L,F_cont]   - masked continuous inputs
+      pred_cont   Tensor[B,L,F_cont]   - cont predictions
+      mask_cont   BoolTensor[B,L,F_cont]- which cont slots were masked
+      tgt_cont    Tensor[B,L,F_cont]   - original cont values
+      cat_features List[str]           - names of your cat fields
+      cont_features List[str]          - names of your cont fields
+      enc          dict                - enc[f]["inv"] maps code→string
+      n            int                 - how many batch samples to show
+    """
+    B, L, _ = logits_cat.shape
+    F_cat = len(cat_features)
+    F_cont = len(cont_features)
+
+    # 1) split logits_cat into per‐feature preds
+    sizes = [len(enc[f]["inv"]) for f in cat_features]
+    cat_preds = torch.zeros((B, L, F_cat), dtype=torch.long, device=logits_cat.device)
+    start = 0
+    for i, size in enumerate(sizes):
+        slice_logits = logits_cat[:, :, start:start+size]  # [B, L, size]
+        cat_preds[:, :, i] = slice_logits.argmax(dim=-1)
+        start += size
+
+    # 2) decoding helper
+    def decode_cat(code: int, feat: str):
+        inv = enc[feat]["inv"]
+        return inv[code] if 0 <= code < len(inv) else f"<UNK:{code}>"
+
+    n = min(n, B)
+    for b in range(n):
+        print(f"\n─ Sample {b} ─")
+        for t in range(L):
+            # categorical fields
+            for i, feat in enumerate(cat_features):
+                if mask_cat[b, t, i]:
+                    tgt = tgt_cat[b, t, i].item()
+                    pred = cat_preds[b, t, i].item()
+                    print(f"[t={t:>2}] {feat:<18}"
+                          f" tgt={decode_cat(tgt, feat):<12}" # type: ignore
+                          f" pred={decode_cat(pred, feat)}") # type: ignore
+            # continuous fields
+            for j, feat in enumerate(cont_features):
+                if mask_cont[b, t, j]:
+                    tgt = tgt_cont[b, t, j].item()
+                    pred = pred_cont[b, t, j].item()
+                    print(f"[t={t:>2}] {feat:<18}"
+                          f" tgt={tgt:>8.3f}"
+                          f" pred={pred:>8.3f}")
+        print("─" * 40)
