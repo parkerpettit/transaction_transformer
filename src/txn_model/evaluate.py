@@ -16,7 +16,7 @@ from sklearn.metrics import (
 )
 
 import wandb
-from data.dataset import slice_batch
+from data.dataset import slice_batch, EmbeddingMemmapDataset
 
 @torch.no_grad()
 def evaluate(
@@ -240,6 +240,7 @@ def evaluate_binary(
     mode: str,
     class_names: list[str] | None = None,
 ):
+    model.to(device)
     model.eval()
     # progress bar format (reuse from pretrain)
     bar_fmt = (
@@ -252,7 +253,7 @@ def evaluate_binary(
     )
 
     tot_loss = 0.0
-    tot_samples = 0
+    sample_count = 0
     all_probs: list[float] = []
     all_labels: list[int] = []
     prog_bar = tqdm(
@@ -263,27 +264,26 @@ def evaluate_binary(
     ncols=200,
     leave=True,
     bar_format=bar_fmt
-    )   
-    for batch in prog_bar:
-        cat = batch["cat"][:, :-1].to(device)
-        con = batch["cont"][:, :-1].to(device)
-        labels = batch["label"].to(device).float()
-        labels_int = labels.long()
+    )  
 
-        logits = model(cat, con, mode=mode)
-        loss = criterion(logits, labels)
+    for batch in prog_bar:
+        cat_inp, cont_inp, labels = batch["cat"].to(device), batch["cont"].to(device), batch['label'].to(device)
+        labels = labels.float()
+        logits = model(cat_inp, cont_inp, mode=mode)  # (B)
+        
+        loss = criterion(logits, labels.float())
         probs = torch.sigmoid(logits)
 
-        bs = labels_int.size(0)
-        tot_loss += loss.item() * bs
-        tot_samples += bs
+        batch_size = labels.size(0)
+        tot_loss += loss.item() * batch_size
+        sample_count += batch_size
 
         all_probs.extend(probs.cpu().tolist())
-        all_labels.extend(labels_int.cpu().tolist())
+        all_labels.extend(labels.cpu().tolist())
         prog_bar.set_postfix({"loss": f"{loss.item():.4f}",
-                        "pos":  f"{labels_int.sum().item():.0f}"})
+                        "pos":  f"{labels.sum().item():.0f}"})
         
-    val_loss = tot_loss / tot_samples
+    val_loss = tot_loss / sample_count
     labels_np = np.asarray(all_labels, dtype=np.int8)
     probs_np  = np.asarray(all_probs,  dtype=np.float32)
     probas_2d = np.vstack([1 - probs_np, probs_np]).T
@@ -292,8 +292,8 @@ def evaluate_binary(
     fpr_limits = [0.01, 0.001, 0.0005, 0.0001]
     df_limits, _ = thresholds_for_fpr_limits(labels_np, probs_np, fpr_limits)
 
-    # Choose one threshold to compute "main" metrics (example: use 1% FPR row)
-    main_thr = df_limits.loc[df_limits.fpr_limit == 0.01, "threshold"].item()
+    # Choose one threshold to compute "main" metrics (example: use .1% FPR row)
+    main_thr = df_limits.loc[df_limits.fpr_limit == 0.001, "threshold"].item()
     preds_np = (probs_np >= main_thr).astype(int)
 
     class_labels = class_names or ["non-fraud", "fraud"]

@@ -1,11 +1,11 @@
 # I/O
 data_dir: data         # Root directory of raw or processed data
 
-head: lstm
+head: mlp
 # ------------- training loop hyper-parameters --------------------------------
 total_epochs: 50      # Number of training epochs
-batch_size:   120     # Batch size for training
-lr:           1.0e-3  # Initial learning rate
+batch_size:   32     # Batch size for training
+lr:           1.0e-5  # Initial learning rate
 window:       10       # Sequence length (transactions per sample)
 stride:       10       # Stride length between windows
 # ------------- feature lists ------------------------------------------------

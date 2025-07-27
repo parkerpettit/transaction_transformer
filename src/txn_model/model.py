@@ -271,7 +271,7 @@ class LSTMHead(nn.Module):
 
     def __init__(self, cfg: LSTMConfig, input_size: int):
         super().__init__()
-
+        self.cfg = cfg
         self.lstm = nn.LSTM(
             input_size=input_size,
             hidden_size=cfg.hidden_size,
@@ -279,7 +279,6 @@ class LSTMHead(nn.Module):
             batch_first=True,
             dropout=cfg.dropout
         )
-
         self.fc = nn.Linear(cfg.hidden_size, 1)
 
     def forward(self, seq_out: Tensor) -> Tensor:
@@ -305,7 +304,7 @@ class LSTMHead(nn.Module):
 class FraudHeadMLP(nn.Module):
     def __init__(self, emb_dim: int, cfg: MLPConfig):
         super().__init__()
-
+        self.cfg = cfg
         layers: list[nn.Module] = []
         # If only one layer, do a plain linear
         if cfg.num_layers == 1:
@@ -331,7 +330,7 @@ class FraudHeadMLP(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x: (batch, emb_dim)
-        return self.net(x)
+        return self.net(x).squeeze(dim=1) #(B,)
 # -------------------------------------------------------------------------------------- #
 #  Full model                                                                           #
 # -------------------------------------------------------------------------------------- #
@@ -403,7 +402,7 @@ class TransactionModel(nn.Module):
         self,
         cat: LongTensor,        # (B, L, C)
         cont: Tensor,           # (B, L, F)
-        mode: str = "fraud",    # 'fraud' | 'ar'
+        mode: str = "ar",    
     ):
         # -- 1) field-level attention -----------------------------------------
         field = self.embedder(cat, cont)          # (B·L, K, D)
@@ -425,11 +424,14 @@ class TransactionModel(nn.Module):
         if mode == "mlp":
             if self.mlp_head is None:
                 raise RuntimeError("No MLP head attached.")
-            return self.mlp_head(seq[:, -1, :]).squeeze(1)
+            return self.mlp_head(seq[:, -1, :])
 
         if mode == "ar":
             h = seq[:, -1, :]
             z = self.ar_dropout(h)
             return self.ar_cat_head(z), self.ar_cont_head(z)
+
+        if mode == "extract":
+            return seq[:, -1, :]
 
         raise ValueError("mode must be 'ar', 'lstm', or 'mlp'")

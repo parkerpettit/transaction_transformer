@@ -21,7 +21,7 @@ from model import TransactionModel
 import torch
 from torch import nn, optim
 
-from config import ModelConfig   # only for typing / pretty storage
+from config import ModelConfig, LSTMConfig, MLPConfig   # only for typing / pretty storage
 
 log = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ def save_ckpt(
     path: str | Path,
     cat_features: List[str],
     cont_features: List[str],
-    cfg: ModelConfig,
+    cfg: ModelConfig | LSTMConfig | MLPConfig,
 ) -> None:
     """
     Persist training state to *path* and sanity-check that it was written.
@@ -96,14 +96,14 @@ def resume_finetune(
     ckpt = torch.load(path, map_location=device, weights_only=False)
     cfg = ckpt["config"]
     model = TransactionModel(cfg).to(device)
-    model.load_state_dict(ckpt["model_state"])
+    model.load_state_dict(ckpt["model_state"], strict=False)
 
     if not unfreeze_backbone:
         for n,p in model.named_parameters():
             if not n.startswith("lstm_head"):
                 p.requires_grad = False
-            elif not n.startswith("mlp"):
-                p.requires_grad=False
+            # elif not n.startswith("mlp"):
+            #     p.requires_grad=False
     for n, p in model.named_parameters():
         print(n, p.requires_grad)
     # build AdamW over only the grad‑true params (1 group)
@@ -131,3 +131,54 @@ def merge(cli_args: argparse.Namespace, file_dict: dict) -> argparse.Namespace:
     merged = vars(cli_args).copy()
     merged = {k: (v if v is not None else file_dict.get(k)) for k, v in merged.items()}
     return argparse.Namespace(**merged)
+
+
+
+# from collections import Counter
+
+# def count_txn_labels_direct(dataset):
+#     counts = Counter()
+#     for i in range(len(dataset)):
+#         label = int(dataset[i]["label"].item())
+#         counts[label] += 1
+#     print(f"non fraud: {counts.get(0,0):,d}")
+#     print(f"fraud:     {counts.get(1,0):,d}")
+#     return counts
+
+# print(count_txn_labels_direct(train_ds))
+# print(count_txn_labels_direct(val_ds))
+
+
+# from collections import Counter
+# from torch.utils.data import DataLoader
+
+# def count_txn_labels(dataset, batch_size=1024, num_workers=0):
+#     """
+#     Iterate through TxnDataset (or via a DataLoader) and count how many
+#     windows are labeled fraud (1) vs non fraud (0).
+#     """
+#     loader = DataLoader(
+#         dataset,
+#         batch_size=batch_size,
+#         shuffle=False,
+#         num_workers=0,
+#         collate_fn=collate_fn  # or your custom collate_fn
+#     )
+#     counts = Counter()
+#     for batch in loader:
+#         labels = batch["label"].flatten().tolist()
+#         counts.update(labels)
+#     print(f"non fraud: {counts.get(0,0):,d}")
+#     print(f"fraud:     {counts.get(1,0):,d}")
+#     return counts
+# print("dataloader method counting")
+# counts = count_txn_labels(train_ds)
+# n_neg = counts.get(0, 0)
+# n_pos = counts.get(1, 0)
+# pos_weight = n_neg / n_pos
+# pos_weight = 82.4213860812
+
+# print(f"negatives = {n_neg:,}, positives = {n_pos:,}, pos_weight = {pos_weight:.3f}")
+# Example usage:
+# dataset = TxnDataset(df, "user_id", cat_feats, cont_feats, window=20, stride=5)
+# count_txn_labels(dataset)
