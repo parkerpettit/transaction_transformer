@@ -1,6 +1,6 @@
 # transaction_transformer
 
-An autoregressive Transformer for credit‑card fraud detection. Pretrain on next‑transaction prediction, then fine‑tune for binary fraud classification—achieving an F1 of 0.8234 at 0.1% FPR versus a 0.7525 LightGBM baseline.
+An autoregressive Transformer for credit‑card fraud detection. Pretrain on next‑transaction prediction, then fine‑tune for binary fraud classification.
 
 ## Features
 - **Self‑supervised pretraining** on 24 M transactions (IBM TabFormer dataset)  
