@@ -6,7 +6,7 @@ Clean, internally-consistent re-implementation of the tabular-sequence model.
 Shapes (all tensors use batch-first convention):
     cat          : (B, L, C)   categorical token ids
     cont         : (B, L, F)   continuous features
-    field_out    : (B·L, K, D)
+    field_out    : (B*L, K, D)
     row_repr     : (B, L, M)
     seq_out      : (B, L, M)
     hidden       : (B, H)      final sequence representation
@@ -14,14 +14,14 @@ Shapes (all tensors use batch-first convention):
 
 from __future__ import annotations
 import math
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from networkx import in_degree_centrality
 import torch
 import torch.nn as nn
 from torch import Tensor, LongTensor, BoolTensor
 
-from config import (
+from configs.config import (
     ModelConfig,
     TransformerConfig,
     LSTMConfig,
@@ -33,7 +33,11 @@ from config import (
 # -------------------------------------------------------------------------------------- #
 class EmbeddingLayer(nn.Module):
     """
-    Embeds categorical fields and linearly projects continuous fields.
+    Embeds categorical fields and uses frequency-based embeddings for continuous fields.
+    
+    For continuous features, we use sin/cos frequency embeddings:
+    γ(v) = (sin(2^0*π*v), cos(2^0*π*v), ..., sin(2^(L-1)*π*v), cos(2^(L-1)*π*v))
+    where L is the number of frequency pairs.
 
     Parameters
     ----------
@@ -48,6 +52,8 @@ class EmbeddingLayer(nn.Module):
         Dropout applied to each field embedding / projection.
     padding_idx : int
         Index used for PAD tokens in every categorical embedding.
+    freq_pairs : int
+        Number of sin/cos pairs for continuous feature embeddings (L=8 by default).
 
     Input shapes
     ------------
@@ -56,7 +62,7 @@ class EmbeddingLayer(nn.Module):
 
     Output
     ------
-    (B·L, K, D) where K = C + F
+    (B*L, K, D) where K = C + F
     """
 
     def __init__(
@@ -66,6 +72,7 @@ class EmbeddingLayer(nn.Module):
         emb_dim: int,
         dropout: float,
         padding_idx: int,
+        freq_pairs: int = 8,
     ) -> None:
         super().__init__()
 
@@ -74,10 +81,16 @@ class EmbeddingLayer(nn.Module):
             [nn.Embedding(v, emb_dim, padding_idx=padding_idx) for v in cat_vocab.values()]
         )
 
-        # Continuous projections 1→D (bias not needed; remove if you do want bias)
+        # Frequency-based continuous embeddings
+        # Each continuous feature gets sin/cos pairs -> linear projection to emb_dim
+        self.freq_pairs = freq_pairs
+        freq_dim = 2 * freq_pairs  # sin/cos pairs
         self.cont_lin = nn.ModuleList(
-            [nn.Linear(1, emb_dim, bias=False) for _ in cont_feats]
+            [nn.Linear(freq_dim, emb_dim) for _ in cont_feats]
         )
+        
+        # Pre-compute frequency multipliers: [2^0, 2^1, ..., 2^(L-1)]
+        self.register_buffer('freq_multipliers', torch.pow(2.0, torch.arange(freq_pairs, dtype=torch.float32)))
 
         self.dropout = nn.Dropout(dropout) if dropout else nn.Identity()
         self.emb_dim = emb_dim
@@ -89,21 +102,37 @@ class EmbeddingLayer(nn.Module):
         Returns
         -------
         field_repr : Tensor
-            Shape (B·L, K, D) where K = #categorical + #continuous fields.
+            Shape (B*L, K, D) where K = #categorical + #continuous fields.
         """
         B, L, _ = cat.shape
-        
+
         # categorical → (B, L, D) for each field
         cat_embs = [
             self.dropout(layer(cat[:, :, i]))
             for i, layer in enumerate(self.cat_emb)
         ]
 
-        # continuous → (B, L, D) for each field
-        cont_embs = [
-            self.dropout(layer(cont[:, :, i].unsqueeze(-1)))
-            for i, layer in enumerate(self.cont_lin)
-        ]
+        # continuous → frequency-based embeddings → (B, L, D) for each field
+        cont_embs = []
+        for i, layer in enumerate(self.cont_lin):
+            # Get continuous values for this feature: (B, L)
+            values = cont[:, :, i]  # (B, L)
+            
+            # Compute frequency embeddings: γ(v) = (sin(2^0*π*v), cos(2^0*π*v), ...)
+            freq_values = values.unsqueeze(-1) * self.freq_multipliers.unsqueeze(0).unsqueeze(0)  # (B, L, freq_pairs)
+            freq_values = freq_values * math.pi  # Scale by π
+            
+            # Create sin/cos pairs
+            sin_vals = torch.sin(freq_values)  # (B, L, freq_pairs)
+            cos_vals = torch.cos(freq_values)  # (B, L, freq_pairs)
+            
+            # Interleave sin/cos: [sin(2^0*π*v), cos(2^0*π*v), sin(2^1*π*v), cos(2^1*π*v), ...]
+            freq_embed = torch.stack([sin_vals, cos_vals], dim=-1)  # (B, L, freq_pairs, 2)
+            freq_embed = freq_embed.reshape(B, L, -1)  # (B, L, 2*freq_pairs)
+            
+            # Project to embedding dimension
+            cont_emb = self.dropout(layer(freq_embed))  # (B, L, D)
+            cont_embs.append(cont_emb)
 
         # stack along field dimension K
         field_stack = torch.stack(cat_embs + cont_embs, dim=2)  # (B, L, K, D)
@@ -113,12 +142,12 @@ class EmbeddingLayer(nn.Module):
 import torch
 import torch.nn as nn
 from torch import Tensor
-from config import TransformerConfig
+from configs.config import TransformerConfig
 
 
 class FieldTransformer(nn.Module):
     """
-    Intra-row Transformer that safely handles very large (B·L) row batches.
+    Intra-row Transformer that safely handles very large (B*L) row batches.
 
     * Input / output shape:  (B x L, K, D)  (batch_first = True)
     * Automatically splits the batch dimension into ≤ 65 535-row chunks so the
@@ -150,7 +179,7 @@ class FieldTransformer(nn.Module):
                                              num_layers=cfg.depth)
 
     # --------------------------------------------------------------------- #
-    def forward(self, x: Tensor) -> Tensor:         # x: (B·L, K, D)
+    def forward(self, x: Tensor) -> Tensor:         # x: (B*L, K, D)
         """
         Returns
         -------
@@ -266,7 +295,7 @@ class LSTMHead(nn.Module):
     LSTM-based sequence summarization + classification head.
     Takes in a (B, L, M) sequence, returns (B, num_classes) logits.
 
- 
+
     """
 
     def __init__(self, cfg: LSTMConfig, input_size: int):
@@ -288,7 +317,7 @@ class LSTMHead(nn.Module):
         seq_out : Tensor
             Shape (B, L, M) - output from the sequence transformer.
         lengths : Tensor
-            Shape (B,) 
+            Shape (B,)
 
         Returns
         -------
@@ -355,10 +384,11 @@ class TransactionModel(nn.Module):
             emb_dim=cfg.ft_config.d_model,       # emb_dim == ft.d_model (validated in cfg)
             dropout=cfg.emb_dropout,
             padding_idx=cfg.padding_idx,
+            freq_pairs=8,  # Number of sin/cos pairs for frequency embeddings
         )
         self.field_tf = FieldTransformer(cfg.ft_config)
 
-        # -- Row projection (flatten K·D → M) -------------------------------
+        # -- Row projection (flatten K*D → M) -------------------------------
         self.num_fields = len(cfg.cat_vocab_sizes) + len(cfg.cont_features)
         self.row_proj   = nn.Linear(self.num_fields * cfg.ft_config.d_model,
                                     cfg.seq_config.d_model)
@@ -375,10 +405,20 @@ class TransactionModel(nn.Module):
         if cfg.mlp_config is not None:
             self.add_mlp_head(cfg.mlp_config)
 
-        self.ar_dropout   = nn.Dropout(cfg.clf_dropout)
-        self.ar_cat_head  = nn.Linear(cfg.seq_config.d_model,
-                                      sum(cfg.cat_vocab_sizes.values()))
-        self.ar_cont_head = nn.Linear(cfg.seq_config.d_model, len(cfg.cont_features))
+        # -- Autoregressive head (predict next transaction) - unified for all features
+        self.ar_dropout = nn.Dropout(cfg.clf_dropout)
+        # Total vocabulary: categorical + quantized continuous
+        total_vocab_size = sum(cfg.cat_vocab_sizes.values())
+        if cfg.use_quantized_targets and cfg.cont_vocab_sizes:
+            total_vocab_size += sum(cfg.cont_vocab_sizes.values())
+        else:
+            # Fallback: treat continuous as single regression target per feature
+            total_vocab_size += len(cfg.cont_features)
+        self.ar_head = nn.Linear(cfg.seq_config.d_model, total_vocab_size)
+
+        # -- MLM head (predict masked tokens) - unified for all features
+        self.mlm_dropout = nn.Dropout(cfg.clf_dropout)
+        self.mlm_head = nn.Linear(cfg.seq_config.d_model, total_vocab_size)
 
       
 
@@ -402,12 +442,13 @@ class TransactionModel(nn.Module):
         self,
         cat: LongTensor,        # (B, L, C)
         cont: Tensor,           # (B, L, F)
-        mode: str = "ar",    
+        mode: str = "ar",
+        mask: Optional[torch.Tensor] = None,  # (B, L) for efficient MLM
     ):
         # -- 1) field-level attention -----------------------------------------
-        field = self.embedder(cat, cont)          # (B·L, K, D)
-        field = self.field_tf(field)              # (B·L, K, D)  (chunked if needed)
-        field = field.flatten(1)                  # (B·L, K·D) concats all per-field embeddings into one vector per row
+        field = self.embedder(cat, cont)          # (B*L, K, D)
+        field = self.field_tf(field)              # (B*L, K, D)  (chunked if needed)
+        field = field.flatten(1)                  # (B*L, K*D) concats all per-field embeddings into one vector per row
 
         # -- 2) project row, then temporal transformer -----------------------
         B, L, _ = cat.shape
@@ -429,9 +470,42 @@ class TransactionModel(nn.Module):
         if mode == "ar":
             h = seq[:, -1, :]
             z = self.ar_dropout(h)
-            return self.ar_cat_head(z), self.ar_cont_head(z)
+            return self.ar_head(z)  # (B, total_vocab_size)
+
+        if mode == "masked" or mode == "mlm":
+            # For MLM, we can optionally compute only masked positions for efficiency
+            if mask is not None and mask.sum() > 0:
+                # Check if mask is 3D (field-level) or 2D (row-level)
+                if len(mask.shape) == 3:
+                    # 3D field-level mask: compute full sequence logits
+                    z = self.mlm_dropout(seq)  # (B, L, D)
+                    logits = self.mlm_head(z)  # (B, L, total_vocab_size)
+                    return logits
+                else:
+                    # 2D row-level mask: use efficient sparse computation
+                    masked_positions = mask.nonzero(as_tuple=False)  # (num_masked, 2) -> [batch_idx, seq_idx]
+                    if len(masked_positions) > 0:
+                        # Extract representations only for masked positions
+                        batch_indices = masked_positions[:, 0]  # (num_masked,)
+                        seq_indices = masked_positions[:, 1]    # (num_masked,)
+                        masked_repr = seq[batch_indices, seq_indices, :]  # (num_masked, D)
+                        
+                        # Compute logits only for masked positions
+                        z = self.mlm_dropout(masked_repr)  # (num_masked, D)
+                        logits = self.mlm_head(z)  # (num_masked, total_vocab_size)
+                        
+                        return logits, masked_positions  # Return logits + position info
+                    else:
+                        # No masked positions
+                        out_features = self.ar_head.out_features if hasattr(self.ar_head, 'out_features') else self.mlm_head.out_features
+                        return torch.empty(0, out_features, device=seq.device), torch.empty(0, 2, dtype=torch.long, device=seq.device)
+            else:
+                # Fallback: compute full sequence (original behavior)
+                z = self.mlm_dropout(seq)  # (B, L, D)
+                logits = self.mlm_head(z)  # (B, L, total_vocab_size)
+                return logits
 
         if mode == "extract":
             return seq[:, -1, :]
 
-        raise ValueError("mode must be 'ar', 'lstm', or 'mlp'")
+        raise ValueError("mode must be 'ar', 'lstm', 'mlp', 'masked', or 'mlm'")

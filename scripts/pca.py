@@ -25,7 +25,7 @@ X_sample = X[idx]
 y_sample = y[idx]
 print(f"Subsample size: {len(idx)} (fraud={n_fraud}, non-fraud={n_fraud})")
 
-# --- Pre‑reduce dimensionality with PCA (optional but recommended) ---
+# --- Pre-reduce dimensionality with PCA (optional but recommended) ---
 print("Starting PCA reduction to 30 dims")
 # pca = PCA(n_components=100, random_state=42)
 # X_reduced = pca.fit_transform(X_sample)

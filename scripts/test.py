@@ -32,7 +32,7 @@ import pandas as pd
 # 1) load your PR‐curve table
 df = pd.read_csv("data/pr_curve.csv")
 df = df[df["class"] == "fraud"]
-# 2) compute F1 = 2·P·R / (P + R), guarding against zero‐division
+# 2) compute F1 = 2*P*R / (P + R), guarding against zero‐division
 df["f1"] = 2 * df["precision"] * df["recall"] / (df["precision"] + df["recall"]).replace(0, 1e-10)
 
 # 3) find the row with the highest F1

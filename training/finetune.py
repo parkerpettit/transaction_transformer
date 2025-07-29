@@ -10,10 +10,17 @@ from pathlib import Path
 from torch.utils.data import DataLoader, TensorDataset
 from torch.optim.lr_scheduler import CosineAnnealingLR
 import numpy as np
-from config            import (LSTMConfig, MLPConfig)
-from data.dataset      import TxnDataset, collate_fn
-from evaluate   import evaluate_binary      # loss + acc per class
-from utils             import save_ckpt, load_ckpt
+import sys
+from pathlib import Path
+
+# Add project root to Python path
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
+from configs.config import (LSTMConfig, MLPConfig)
+from data.dataset import TxnDataset, collate_fn, EmbeddingMemmapDataset
+from evaluation.evaluate import evaluate_binary      # loss + acc per class
+from utils.utils import save_ckpt, load_ckpt, load_cfg, merge, resume_finetune
 import time
 import sys
 import traceback
@@ -22,10 +29,9 @@ import torch
 import torch.nn as nn
 import wandb
 from tqdm.auto import tqdm
-from utils import load_cfg, merge, load_ckpt, resume_finetune
-from model import FraudHeadMLP, LSTMHead
+from torch.cuda.amp import autocast, GradScaler
+from models.transformer.transformer_model import FraudHeadMLP, LSTMHead
 from torch.utils.data import DataLoader
-from data.dataset import EmbeddingMemmapDataset
 from torch.utils.data import WeightedRandomSampler
 def str2bool(v):
     if isinstance(v, bool): return v
@@ -39,7 +45,7 @@ def main():
 
     # ------------- paths / run control -------------------------------------------
     ap.add_argument("--resume",        action="store_true", help="Resume from latest checkpoint in data_dir")
-    ap.add_argument("--config",        type=str,            help="YAML file with default hyper-params", default="configs/finetune.yaml")
+    ap.add_argument("--config",        type=str,            help="YAML file with default hyper-params")
     ap.add_argument("--data_dir",      type=str,            help="Root directory of raw or processed data")
 
     # ------------- training loop hyper-params ------------------------------------
@@ -70,18 +76,33 @@ def main():
     ap.add_argument(
         "--head",
         choices=["mlp", "lstm"],
-        default="mlp",
         help="Classification head to attach on top of the frozen backbone",
     )
+    
+    # Performance optimizations
+    ap.add_argument("--use_mixed_precision", type=bool, help="Enable automatic mixed precision training")
+    ap.add_argument("--gradient_checkpointing", type=bool, help="Enable gradient checkpointing to save memory")
+    ap.add_argument("--compile_model", type=bool, help="Enable torch.compile for faster training")
 
     cli = ap.parse_args()
 
-
+    # Set default config if not provided
+    if cli.config is None:
+        cli.config = "configs/finetune.yaml"
 
     # --- 2. merge file + CLI ---------------
     file_params = load_cfg(cli.config)
     args = merge(cli, file_params)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    # Set training type for path configuration
+    args.training_type = "finetune"
+    
+    # Create path configuration
+    from configs.paths import create_paths_from_config
+    paths = create_paths_from_config(vars(args))
+    paths.ensure_dirs_exist()
+    print(f"Using paths:\n{paths}")
 
     # --- Data -------------------------------------------------------------------
     # cache = Path(args.data_dir) / "full_processed.pt"
@@ -118,10 +139,10 @@ def main():
     )
 
     ts   = datetime.now().strftime("%Y%m%d-%H%M%S")
-    ckpt_path = Path(args.data_dir) / f"big_finetune_{args.head}.ckpt"
+    ckpt_path = paths.get_custom_checkpoint_path(f"big_finetune_{args.head}.ckpt")
     run_name  = f"finetune-{args.head}-{Path(args.data_dir).stem}-{ts}"
     tag       = f"{args.head}_{'unfrozen' if args.unfreeze else 'frozen'}"
-    backbone_path = Path(args.data_dir) / "big_legit_backbone.pt"
+    backbone_path = paths.pretrained_models_dir / "big_legit_backbone.pt"
 
 
     # print("Loading train_data")
@@ -133,13 +154,16 @@ def main():
 
 
         # --- Data -------------------------------------------------------------------
-    cache = Path(args.data_dir) / "full_processed.pt"
+    cache = paths.finetune_data_path
     if cache.exists():
-        print("Processed data exists, loading now.")
-        train_df, val_df, test_df, enc, cat_features, cont_features, scaler = torch.load(cache,  weights_only=False)
-        print("Processed data loaded.")
+        print("Processed all transactions data exists, loading now.")
+        train_df, val_df, test_df, enc, cat_features, cont_features, scaler, qparams = torch.load(cache, weights_only=False)
+        print("Processed all transactions data loaded.")
     else:
-        print("Preprocessed data not found.")
+        print("Processed all transactions data file doesn't exist, run preprocessing.py.")
+        print("Please run data preprocessing first to create the required data files.")
+        print(f"Expected data file: {cache}")
+        return None, None
         
     train_ds = TxnDataset(train_df, cat_features[0], cat_features, cont_features,
                args.window, args.stride)
@@ -162,7 +186,7 @@ def main():
         )
 
     if args.resume and ckpt_path.exists():
-        # resume the entire fine‑tune run
+        # resume the entire fine-tune run
         model, best_val, start_epoch, optim = resume_finetune(
             ckpt_path,
             unfreeze_backbone=args.unfreeze,
@@ -171,7 +195,7 @@ def main():
         print(f"Resuming fine-tune from epoch {start_epoch}, best val={best_val:.4f}")
         forward_mode = args.head
 
-    else:  # fresh fine‑tune from pretrained backbone
+    else:  # fresh fine-tune from pretrained backbone
         if not backbone_path.exists():
             raise FileNotFoundError(f"Backbone checkpoint not found at {backbone_path}")
 
@@ -264,6 +288,19 @@ def main():
 
     optim = torch.optim.AdamW(model.parameters(), lr=args.lr)
     cfg = model.cfg
+    
+    # Performance optimizations
+    scaler = GradScaler() if args.use_mixed_precision else None
+    
+    if args.compile_model and hasattr(torch, 'compile'):
+        print("Compiling model for faster training...")
+        model = torch.compile(model)
+        
+    if args.gradient_checkpointing:
+        print("Enabling gradient checkpointing...")
+        if hasattr(model, 'gradient_checkpointing_enable'):
+            model.gradient_checkpointing_enable()
+    
     # --------------------------------------------------------------------------- #
     #  loss
     # --------------------------------------------------------------------------- #
@@ -343,14 +380,24 @@ def main():
             for batch in prog_bar:
                 cat_inp, cont_inp, labels = batch["cat"].to(device), batch["cont"].to(device), batch['label'].to(device)
                 labels = labels.float()
-                logits = model(cat_inp, cont_inp, mode=forward_mode)  # (B)
-
-                loss = criterion(logits, labels)
+                optim.zero_grad()
+                
+                if args.use_mixed_precision and scaler is not None:
+                    with autocast():
+                        logits = model(cat_inp, cont_inp, mode=forward_mode)  # (B)
+                        loss = criterion(logits, labels)
+                    
+                    scaler.scale(loss).backward()
+                    scaler.step(optim)
+                    scaler.update()
+                else:
+                    logits = model(cat_inp, cont_inp, mode=forward_mode)  # (B)
+                    loss = criterion(logits, labels)
+                    loss.backward()
+                    optim.step()
+                
                 if batch_idx % 100 == 0:
                     wandb.log({"training_loss": loss.item()})
-                optim.zero_grad()
-                loss.backward()
-                optim.step()
                 scheduler.step()
 
                 batch_size = labels.size(0)
@@ -426,7 +473,12 @@ def main():
                     "best_f1": best_f1})
             run.finish()
         print(f"Fine-tuning complete. Best val_loss: {best_val:.4f}")
+    
+    return args, run
 
 
 if __name__ == "__main__":
-    main()
+    args, run = main()
+    if args is None or run is None:
+        print("Training failed due to missing data. Please run preprocessing first.")
+        sys.exit(1)
