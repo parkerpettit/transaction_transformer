@@ -1,0 +1,34 @@
+# I/O
+data_dir: data         # Root directory of raw or processed data
+model_dir: checkpoints # Directory to save/load model checkpoints
+
+# ------------- training loop hyper-parameters --------------------------------
+total_epochs: 10      # Number of training epochs
+batch_size:   64      # Batch size for training
+lr:           1.0e-04 # Initial learning rate
+window:       10      # Sequence length (transactions per sample)
+stride:       5       # Stride length between windows
+
+# ------------- fine-tuning specific settings ----------------------------------
+head: mlp             # Head type: 'mlp' or 'lstm'
+freeze_backbone: true # Whether to freeze the pretrained backbone
+unfreeze_epochs: 0    # Number of epochs to train with frozen backbone before unfreezing
+
+# ------------- MLP head configuration ----------------------------------------
+mlp_hidden_size: 256  # Hidden size for MLP head
+mlp_num_layers: 2     # Number of layers in MLP head
+mlp_dropout: 0.1      # Dropout for MLP head
+
+# ------------- LSTM head configuration ---------------------------------------
+lstm_hidden_size: 256 # Hidden size for LSTM head
+lstm_num_layers: 2    # Number of layers in LSTM head
+lstm_dropout: 0.1     # Dropout for LSTM head
+
+# ------------- data balancing ------------------------------------------------
+class_weight: auto    # Class weighting: 'auto', 'balanced', or null
+use_weighted_sampler: true # Use weighted random sampler for class balance
+
+# ------------- performance optimizations -------------------------------------
+use_mixed_precision: true    # Enable automatic mixed precision training
+gradient_checkpointing: false # Enable gradient checkpointing to save memory
+compile_model: false        # Enable torch.compile for faster training
