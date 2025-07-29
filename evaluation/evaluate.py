@@ -155,6 +155,11 @@ def show_sample_predictions(
                         
                         predicted_idx = feature_logits.argmax().item()
                         target_idx = feature_target.item()
+                        
+                        # Skip if target_idx is -100 (ignored position in new masking format)
+                        if target_idx == -100:
+                            continue
+                            
                         is_correct = predicted_idx == target_idx
 
                         # Try to decode values if encoders are available
@@ -188,6 +193,11 @@ def show_sample_predictions(
                             
                             predicted_idx = feature_logits.argmax().item()
                             target_idx = feature_target.item()
+                            
+                            # Skip if target_idx is -100 (ignored position in new masking format)
+                            if target_idx == -100:
+                                continue
+                                
                             is_correct = predicted_idx == target_idx
 
                             # Try to decode quantized values if qparams are available
@@ -258,6 +268,11 @@ def show_sample_predictions(
                         
                         predicted_idx = feature_logits.argmax().item()
                         target_idx = feature_target.item()
+                        
+                        # Skip if target_idx is -100 (ignored position in new masking format)
+                        if target_idx == -100:
+                            continue
+                            
                         is_correct = predicted_idx == target_idx
 
                         # Try to decode values if encoders are available
@@ -303,6 +318,11 @@ def show_sample_predictions(
                             
                             predicted_idx = feature_logits.argmax().item()
                             target_idx = feature_target.item()
+                            
+                            # Skip if target_idx is -100 (ignored position in new masking format)
+                            if target_idx == -100:
+                                continue
+                                
                             is_correct = predicted_idx == target_idx
 
                             # Try to decode quantized values if qparams are available
@@ -392,6 +412,11 @@ def show_sample_predictions(
 
         predicted_idx = feature_logits.argmax().item()
         target_idx = feature_target.item()
+        
+        # Skip if target_idx is -100 (ignored position in new masking format)
+        if target_idx == -100:
+            continue
+            
         is_correct = predicted_idx == target_idx
 
         # Try to decode values if encoders are available
@@ -442,6 +467,11 @@ def show_sample_predictions(
 
             predicted_idx = feature_logits.argmax().item()
             target_idx = feature_target.item()
+            
+            # Skip if target_idx is -100 (ignored position in new masking format)
+            if target_idx == -100:
+                continue
+                
             is_correct = predicted_idx == target_idx
 
             # Try to decode quantized values if qparams are available
@@ -540,42 +570,52 @@ def evaluate(
                 qtarget = None
         else:
             # MLM mode: use full sequences (no slicing)
-            inp_cat = batch["cat"].to(device)
-            inp_cont = batch["cont"].to(device)
-            tgt_cat = batch["cat"].to(device)  # Full sequence as targets
-            tgt_cont = batch["cont"].to(device)
-            qtarget = batch.get("qtarget")
+            inp_cat = batch["cat_input"].to(device)
+            inp_cont = batch["cont_input"].to(device)
+            tgt_cat = batch["cat_labels"].to(device)  # Full sequence as targets
+            tgt_cont = batch["cont_labels"].to(device)
+            qtarget = batch.get("qtarget_labels")
             if qtarget is not None:
                 qtarget = qtarget.to(device)
+            mask = batch.get("mask")  # Get mask from data collator
+            if mask is not None:
+                mask = mask.to(device)
 
         # Forward pass with unified head
         if mode in ["masked", "mlm"]:
-            # For MLM, we need to create masks and only evaluate masked positions
-            total_features = len(cat_features) + len(cont_features)
-            mask = create_field_and_row_mask(
-                batch_size=inp_cat.shape[0], 
-                seq_len=inp_cat.shape[1],
-                num_features=total_features,
-                field_mask_prob=0.15, 
-                row_mask_prob=0.10,
-                device=device
-            )
-            model_output = model(inp_cat, inp_cont, mode=mode, mask=mask)  # (B, L, total_vocab_size) or (num_masked, total_vocab_size)
-            
-            # Handle tuple return from sparse MLM mode
-            if isinstance(model_output, tuple):
-                logits, masked_positions = model_output
-                # For sparse mode, we need to handle the evaluation differently
-                if len(logits) == 0:
-                    # No masked positions - skip this batch
-                    batch_size = inp_cat.size(0)
-                    total_loss += 0.0 * batch_size
-                    total_samples += batch_size
-                    prog_bar.set_postfix({"loss": "0.0000"})
-                    continue
-            else:
+            # For MLM with new data collator, inputs are already masked
+            if mask is not None:
+                # New efficient approach: inputs are already masked from data collator
+                model_output = model(inp_cat, inp_cont, mode=mode)  # (B, L, total_vocab_size)
                 logits = model_output
-                masked_positions = None
+                masked_positions = None  # Not needed with new approach
+            else:
+                # Fallback to old approach for compatibility
+                total_features = len(cat_features) + len(cont_features)
+                mask = create_field_and_row_mask(
+                    batch_size=inp_cat.shape[0], 
+                    seq_len=inp_cat.shape[1],
+                    num_features=total_features,
+                    field_mask_prob=0.15, 
+                    row_mask_prob=0.10,
+                    device=device
+                )
+                model_output = model(inp_cat, inp_cont, mode=mode, mask=mask)  # (B, L, total_vocab_size) or (num_masked, total_vocab_size)
+                
+                # Handle tuple return from sparse MLM mode
+                if isinstance(model_output, tuple):
+                    logits, masked_positions = model_output
+                    # For sparse mode, we need to handle the evaluation differently
+                    if len(logits) == 0:
+                        # No masked positions - skip this batch
+                        batch_size = inp_cat.size(0)
+                        total_loss += 0.0 * batch_size
+                        total_samples += batch_size
+                        prog_bar.set_postfix({"loss": "0.0000"})
+                        continue
+                else:
+                    logits = model_output
+                    masked_positions = None
         else:
             logits = model(inp_cat, inp_cont, mode=mode)  # (B, total_vocab_size) or (B, L, total_vocab_size)
             masked_positions = None

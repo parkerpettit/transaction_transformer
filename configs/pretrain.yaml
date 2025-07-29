@@ -59,10 +59,6 @@ use_label_smoothing: false  # Set to true for advanced label smoothing (slower b
 label_smoothing_epsilon: 0.1
 neighborhood_size: 5
 
-# MLM-specific optimizations
-mlm_batch_size: 16  # Smaller batch size for MLM due to memory requirements
-mlm_reduced_vocab: true  # Only compute logits for masked positions (experimental)
-use_sparse_mlm: true  # Use efficient sparse MLM computation (recommended)
 
 # -- Path Configuration --------------------------------------------------
 # Override default filenames for data and checkpoints (optional)

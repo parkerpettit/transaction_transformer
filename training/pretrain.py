@@ -130,7 +130,10 @@ def main():
         # Create data loaders
         train_loader, val_loader = create_dataloaders(
             train_df, val_df, cat_features, cont_features,
-            args.batch_size, args.window, args.stride
+            args.batch_size, args.window, args.stride,
+            mode=args.mode,
+            mask_prob=args.mask_prob,
+            masking_mode="field"  # Use field-level masking by default
         )
         
         # Setup model and training

@@ -1,122 +1,130 @@
 """
-Data loading utilities for pretraining.
+Data loading utilities for training.
 """
 import torch
 from pathlib import Path
+from typing import Tuple, Any, List
 from torch.utils.data import DataLoader
-from typing import Tuple, Dict, List, Any, Optional
-
 from data.dataset import TxnDataset, collate_fn
+from training.data_collator import create_mlm_collator
 from configs.paths import ProjectPaths
 
 
 def load_processed_data(paths: ProjectPaths, mode: str = "pretrain") -> Tuple[Any, ...]:
     """
-    Load processed data from cache.
+    Load processed data from the specified paths.
     
     Args:
-        paths: ProjectPaths instance with configured paths
-        mode: "pretrain" or "finetune" to determine which dataset to load
+        paths: ProjectPaths object containing data paths
+        mode: Training mode ("pretrain" or "finetune")
         
     Returns:
         Tuple of (train_df, val_df, test_df, enc, cat_features, cont_features, scaler, qparams)
-        
-    Raises:
-        FileNotFoundError: If processed data doesn't exist
     """
     if mode == "pretrain":
-        cache_path = paths.pretrain_data_path
-        data_type = "pretraining"
-    elif mode == "finetune":
-        cache_path = paths.finetune_data_path  
-        data_type = "finetuning"
+        data_path = paths.pretrain_data_path
     else:
-        raise ValueError(f"Unknown mode: {mode}. Use 'pretrain' or 'finetune'")
+        data_path = paths.finetune_data_path
     
-    if not cache_path.exists():
-        raise FileNotFoundError(
-            f"Processed {data_type} data not found at {cache_path}. "
-            "Please run data preprocessing first."
-        )
+    if not data_path.exists():
+        raise FileNotFoundError(f"Processed data not found at {data_path}")
     
-    print(f"Loading processed {data_type} data from {cache_path}...")
-    data = torch.load(cache_path, weights_only=False)
-    print(f"Processed {data_type} data loaded.")
+    print(f"Loading processed data from {data_path}")
+    data = torch.load(data_path, weights_only=False)
     
-    return data
-
-
-def load_processed_data_legacy(data_dir: str) -> Tuple[Any, ...]:
-    """
-    Legacy data loading function for backward compatibility.
+    if len(data) == 7:
+        # Legacy format without quantization parameters
+        train_df, val_df, test_df, enc, cat_features, cont_features, scaler = data
+        qparams = None
+    elif len(data) == 8:
+        # New format with quantization parameters
+        train_df, val_df, test_df, enc, cat_features, cont_features, scaler, qparams = data
+    else:
+        raise ValueError(f"Unexpected data format with {len(data)} elements")
     
-    Args:
-        data_dir: Directory containing processed data
-        
-    Returns:
-        Tuple of (train_df, val_df, test_df, enc, cat_features, cont_features, scaler, qparams)
-        
-    Raises:
-        FileNotFoundError: If processed data doesn't exist
-    """
-    cache_path = Path(data_dir) / "datasets" / "legitimate_transactions_processed.pt"
+    print(f"Loaded data: {len(train_df)} train, {len(val_df)} val, {len(test_df)} test samples")
+    print(f"Categorical features: {cat_features}")
+    print(f"Continuous features: {cont_features}")
     
-    if not cache_path.exists():
-        raise FileNotFoundError(
-            f"Processed data not found at {cache_path}. "
-            "Please run data preprocessing first."
-        )
-    
-    print("Loading processed legitimate data...")
-    data = torch.load(cache_path, weights_only=False)
-    print("Processed legitimate data loaded.")
-    
-    return data
+    return train_df, val_df, test_df, enc, cat_features, cont_features, scaler, qparams
 
 
 def create_dataloaders(
     train_df: Any,
-    val_df: Any, 
+    val_df: Any,
     cat_features: List[str],
     cont_features: List[str],
     batch_size: int,
     window: int,
     stride: int,
-    num_workers: int = 4
+    mode: str = "ar",
+    mask_prob: float = 0.15,
+    masking_mode: str = "field"
 ) -> Tuple[DataLoader, DataLoader]:
     """
-    Create train and validation dataloaders.
+    Create training and validation data loaders.
     
     Args:
         train_df: Training dataframe
         val_df: Validation dataframe
         cat_features: List of categorical feature names
         cont_features: List of continuous feature names
-        batch_size: Batch size for training
-        window: Sequence length (transactions per sample)
-        stride: Stride length between windows
-        num_workers: Number of dataloader workers
+        batch_size: Batch size
+        window: Sequence length
+        stride: Stride between sequences
+        mode: Training mode ("ar", "masked", "mlm")
+        mask_prob: Masking probability for MLM
+        masking_mode: Masking mode ("field", "row", "both")
         
     Returns:
         Tuple of (train_loader, val_loader)
     """
-    print("Creating training loader")
+    # Create datasets
+    train_dataset = TxnDataset(
+        train_df, 
+        cat_features[0],  # group_by column
+        cat_features, 
+        cont_features,
+        window=window,
+        stride=stride
+    )
+    
+    val_dataset = TxnDataset(
+        val_df,
+        cat_features[0],  # group_by column
+        cat_features,
+        cont_features,
+        window=window,
+        stride=stride
+    )
+    
+    print(f"Created datasets: {len(train_dataset)} train, {len(val_dataset)} val samples")
+    
+    # Create data collator for MLM mode
+    if mode in ["masked", "mlm"]:
+        collator = create_mlm_collator(
+            mask_prob=mask_prob,
+            mode=masking_mode
+        )
+    else:
+        collator = collate_fn
+    
+    # Create data loaders
     train_loader = DataLoader(
-        TxnDataset(train_df, cat_features[0], cat_features, cont_features, window, stride),
+        train_dataset,
         batch_size=batch_size,
         shuffle=True,
-        collate_fn=collate_fn,
-        num_workers=num_workers,
+        collate_fn=collator,
+        num_workers=4,
         pin_memory=True
     )
-
-    print("Creating validation loader")
+    
     val_loader = DataLoader(
-        TxnDataset(val_df, cat_features[0], cat_features, cont_features, window, stride),
+        val_dataset,
         batch_size=batch_size,
         shuffle=False,
-        collate_fn=collate_fn,
-        num_workers=num_workers,
+        collate_fn=collator,
+        num_workers=4,
         pin_memory=True
     )
     
@@ -125,32 +133,18 @@ def create_dataloaders(
 
 def verify_data_exists(paths: ProjectPaths, mode: str = "pretrain") -> bool:
     """
-    Verify that processed data exists.
+    Verify that processed data exists for the specified mode.
     
     Args:
-        paths: ProjectPaths instance with configured paths
-        mode: "pretrain" or "finetune" to determine which dataset to check
+        paths: ProjectPaths object containing data paths
+        mode: Training mode ("pretrain" or "finetune")
         
     Returns:
         True if data exists, False otherwise
     """
     if mode == "pretrain":
-        return paths.pretrain_data_path.exists()
-    elif mode == "finetune":
-        return paths.finetune_data_path.exists()
+        data_path = paths.pretrain_data_path
     else:
-        raise ValueError(f"Unknown mode: {mode}. Use 'pretrain' or 'finetune'")
-
-
-def verify_data_exists_legacy(data_dir: str) -> bool:
-    """
-    Legacy function to verify data exists for backward compatibility.
+        data_path = paths.finetune_data_path
     
-    Args:
-        data_dir: Directory to check for processed data
-        
-    Returns:
-        True if data exists, False otherwise
-    """
-    cache_path = Path(data_dir) / "datasets" / "legitimate_transactions_processed.pt"
-    return cache_path.exists() 
+    return data_path.exists() 

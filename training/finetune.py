@@ -33,12 +33,7 @@ from torch.cuda.amp import autocast, GradScaler
 from models.transformer.transformer_model import FraudHeadMLP, LSTMHead
 from torch.utils.data import DataLoader
 from torch.utils.data import WeightedRandomSampler
-def str2bool(v):
-    if isinstance(v, bool): return v
-    v = v.lower()
-    if v in ("yes","true","t","1"):   return True
-    if v in ("no","false","f","0"):   return False
-    raise argparse.ArgumentTypeError("Boolean value expected")
+
 def main():
     # --- 1. include --config flag -----------
     ap = argparse.ArgumentParser(description="Train / fine-tune TransactionModel")

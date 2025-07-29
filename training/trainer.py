@@ -10,6 +10,7 @@ from torch.utils.data import DataLoader
 from torch.amp.autocast_mode import autocast
 from torch.amp.grad_scaler import GradScaler
 from tqdm.auto import tqdm
+import torch.nn.functional as F
 
 from configs.config import ModelConfig
 from models.transformer.transformer_model import TransactionModel
@@ -18,14 +19,9 @@ from evaluation.evaluate import evaluate
 from utils.utils import save_ckpt
 from configs.paths import ProjectPaths
 from utils.masking import (
-    create_mlm_mask, 
     create_field_and_row_mask,
-    apply_categorical_masking, 
-    apply_continuous_masking,
-    apply_field_level_categorical_masking,
+    apply_field_level_categorical_masking, 
     apply_field_level_continuous_masking,
-    compute_fast_mlm_loss,
-    compute_sparse_mlm_loss,
     compute_field_level_mlm_loss
 )
 from training.logging_utils import TrainingLogger
@@ -122,8 +118,8 @@ class PretrainTrainer:
                 break
             loss, batch_size, extra_metrics = self._train_batch(batch)
             
-            total_loss += loss * batch_size
-            total_samples += batch_size
+            total_loss = total_loss + loss * batch_size
+            total_samples = total_samples + batch_size
                 
             prog_bar.set_postfix({
                 "loss": f"{loss:.4f}",
@@ -143,8 +139,13 @@ class PretrainTrainer:
             Tuple of (loss, batch_size, extra_metrics)
         """
         # Prepare batch data
+        mask = None
         if self.args.mode in ["masked", "mlm"]:
-            cat_input, cont_inp, cat_tgt, cont_tgt, qtarget = self._prepare_mlm_batch(batch)
+            batch_items = self._prepare_mlm_batch(batch)
+            if len(batch_items) == 6:
+                cat_input, cont_inp, cat_tgt, cont_tgt, qtarget, mask = batch_items  # type: ignore
+            else:
+                cat_input, cont_inp, cat_tgt, cont_tgt, qtarget = batch_items  # type: ignore
         else:
             cat_input, cont_inp, cat_tgt, cont_tgt, qtarget = self._prepare_ar_batch(batch)
         
@@ -154,32 +155,57 @@ class PretrainTrainer:
         # Forward pass with optional mixed precision
         if self.args.use_mixed_precision and self.scaler is not None:
             with autocast('cuda'):
-                loss, extra_metrics = self._forward_pass(
-                    cat_input, cont_inp, cat_tgt, cont_tgt, qtarget
-                )
+                if self.args.mode in ["masked", "mlm"]:
+                    loss, extra_metrics = self._forward_mlm(
+                        cat_input, cont_inp, cat_tgt, cont_tgt, qtarget, mask
+                    )
+                else:
+                    loss, extra_metrics = self._forward_ar(
+                        cat_input, cont_inp, cat_tgt, cont_tgt, qtarget
+                    )
             self.scaler.scale(loss).backward()
             self.scaler.step(self.optimizer)
             self.scaler.update()
         else:
-            loss, extra_metrics = self._forward_pass(
-                cat_input, cont_inp, cat_tgt, cont_tgt, qtarget
-            )
+            if self.args.mode in ["masked", "mlm"]:
+                loss, extra_metrics = self._forward_mlm(
+                    cat_input, cont_inp, cat_tgt, cont_tgt, qtarget, mask
+                )
+            else:
+                loss, extra_metrics = self._forward_ar(
+                    cat_input, cont_inp, cat_tgt, cont_tgt, qtarget
+                )
             loss.backward()
             self.optimizer.step()
         
         return loss.item(), batch_size, extra_metrics
     
-    def _prepare_mlm_batch(self, batch: Dict[str, torch.Tensor]):
-        """Prepare batch for MLM training."""
-        cat_input = batch["cat"].to(self.device)
-        cont_inp = batch["cont"].to(self.device)
-        cat_tgt = batch["cat"].to(self.device)  # Full sequence as targets
-        cont_tgt = batch["cont"].to(self.device)
-        qtarget = batch.get("qtarget")
-        if qtarget is not None:
-            qtarget = qtarget.to(self.device)
-        
-        return cat_input, cont_inp, cat_tgt, cont_tgt, qtarget
+    def _prepare_mlm_batch(self, batch: Dict[str, torch.Tensor]) -> tuple:
+        """Prepare batch for MLM training with efficient collator."""
+        # With the new collator, the batch already contains masked inputs and labels
+        if "cat_input" in batch:
+            # New efficient collator format
+            cat_input = batch["cat_input"].to(self.device)
+            cont_inp = batch["cont_input"].to(self.device)
+            cat_labels = batch["cat_labels"].to(self.device)
+            cont_labels = batch["cont_labels"].to(self.device)
+            mask = batch["mask"].to(self.device)
+            qtarget_labels = batch.get("qtarget_labels")
+            if qtarget_labels is not None:
+                qtarget_labels = qtarget_labels.to(self.device)
+            
+            return cat_input, cont_inp, cat_labels, cont_labels, qtarget_labels, mask
+        else:
+            # Fallback to old format for compatibility
+            cat_input = batch["cat"].to(self.device)
+            cont_inp = batch["cont"].to(self.device)
+            cat_tgt = batch["cat"].to(self.device)  # Full sequence as targets
+            cont_tgt = batch["cont"].to(self.device)
+            qtarget = batch.get("qtarget")
+            if qtarget is not None:
+                qtarget = qtarget.to(self.device)
+            
+            return cat_input, cont_inp, cat_tgt, cont_tgt, qtarget, None
     
     def _prepare_ar_batch(self, batch: Dict[str, torch.Tensor]):
         """Prepare batch for AR training."""
@@ -192,80 +218,203 @@ class PretrainTrainer:
         
         return cat_input, cont_inp, cat_tgt, cont_tgt, qtarget
     
-    def _forward_pass(
-        self,
-        cat_input: torch.Tensor,
-        cont_inp: torch.Tensor,
-        cat_tgt: torch.Tensor,
-        cont_tgt: torch.Tensor,
-        qtarget: Optional[torch.Tensor]
-    ) -> Tuple[torch.Tensor, Dict[str, Any]]:
-        """
-        Forward pass and loss computation.
-        
-        Returns:
-            Tuple of (loss, extra_metrics)
-        """
-        if self.args.mode in ["masked", "mlm"]:
-            return self._forward_mlm(cat_input, cont_inp, cat_tgt, cont_tgt, qtarget)
-        else:
-            return self._forward_ar(cat_input, cont_inp, cat_tgt, cont_tgt, qtarget)
-    
     def _forward_mlm(
         self,
         cat_input: torch.Tensor,
         cont_inp: torch.Tensor,
-        cat_tgt: torch.Tensor,
-        cont_tgt: torch.Tensor,
-        qtarget: Optional[torch.Tensor]
+        cat_labels: torch.Tensor,
+        cont_labels: torch.Tensor,
+        qtarget_labels: Optional[torch.Tensor],
+        mask: Optional[torch.Tensor] = None
     ) -> Tuple[torch.Tensor, Dict[str, Any]]:
-        """MLM forward pass with field-level and row-level masking."""
-        # Calculate total number of features
-        num_cat_features = len(self.cat_features)
-        num_cont_features = len(self.cont_features)
-        total_features = num_cat_features + num_cont_features
+        """Efficient MLM forward pass using pre-masked inputs from data collator."""
         
-        # Create field-level and row-level mask
-        mask = create_field_and_row_mask(
-            batch_size=cat_input.shape[0], 
-            seq_len=cat_input.shape[1],
-            num_features=total_features,
-            field_mask_prob=self.args.mask_prob,  # 15% field-level masking
-            row_mask_prob=0.10,  # 10% row-level masking
-            device=self.device
-        )
+        if mask is not None:
+            # New efficient approach: inputs are already masked, just compute logits
+            logits = self.model(cat_input, cont_inp, mode="mlm")  # (B, L, total_vocab_size)
+            
+            # Compute loss using the efficient masked loss function
+            if qtarget_labels is not None:
+                # Use quantized targets for continuous features
+                loss = self._compute_efficient_mlm_loss(
+                    logits, cat_labels, qtarget_labels, mask
+                )
+            else:
+                # Fallback to categorical labels only
+                loss = self._compute_efficient_mlm_loss_cat_only(
+                    logits, cat_labels, mask
+                )
+            
+            # Count masked elements for logging
+            if len(mask.shape) == 3:  # Field-level mask
+                masked_elements = mask.sum().item()
+            else:  # Row-level mask  
+                masked_elements = mask.sum().item() * (len(self.cat_features) + len(self.cont_features))
+            
+            return loss, {
+                "mask_prob": self.args.mask_prob,
+                "masked_elements": masked_elements,
+                "efficient_masking": True
+            }
+        else:
+            # Fallback to old inefficient approach for compatibility
+            # Calculate total number of features
+            num_cat_features = len(self.cat_features)
+            num_cont_features = len(self.cont_features)
+            total_features = num_cat_features + num_cont_features
+            
+            # Create field-level and row-level mask
+            mask = create_field_and_row_mask(
+                batch_size=cat_input.shape[0], 
+                seq_len=cat_input.shape[1],
+                num_features=total_features,
+                field_mask_prob=self.args.mask_prob,  # 15% field-level masking
+                row_mask_prob=0.10,  # 10% row-level masking
+                device=self.device
+            )
+            
+            # Apply masking to inputs
+            masked_cat_input = apply_field_level_categorical_masking(
+                cat_input, mask, num_cat_features
+            )
+            masked_cont_input = apply_field_level_continuous_masking(
+                cont_inp, mask, num_cat_features
+            )
+            
+            # Forward pass - use standard MLM mode (not sparse) for field-level masking
+            logits = self.model(masked_cat_input, masked_cont_input, mode="mlm")  # (B, L, total_vocab_size)
+            
+            # Compute loss using field-level mask
+            loss = compute_field_level_mlm_loss(
+                logits=logits,
+                targets_cat=cat_labels,
+                targets_cont=qtarget_labels,
+                mask=mask,
+                vocab_sizes=self.vocab_sizes,
+                cont_vocab_sizes=self.config.cont_vocab_sizes or {},
+                cont_features=self.cont_features,
+                criterion=self.criterion_cat
+            )
+            
+            # Count masked elements for logging
+            masked_elements = mask.sum().item()
+            
+            return loss, {
+                "mask_prob": self.args.mask_prob,
+                "masked_elements": masked_elements,
+                "field_level_masking": True,
+                "efficient_masking": False
+            }
+
+    def _compute_efficient_mlm_loss(
+        self,
+        logits: torch.Tensor,
+        cat_labels: torch.Tensor,
+        qtarget_labels: torch.Tensor,
+        mask: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        Compute MLM loss efficiently using pre-computed labels.
+        Only computes loss on masked positions (labels != -100).
+        """
+        total_loss = torch.tensor(0.0, device=logits.device, requires_grad=True)
+        num_losses = 0
         
-        # Apply masking to inputs
-        masked_cat_input = apply_field_level_categorical_masking(
-            cat_input, mask, num_cat_features
-        )
-        masked_cont_input = apply_field_level_continuous_masking(
-            cont_inp, mask, num_cat_features
-        )
+        # Get vocabulary offsets for each feature
+        vocab_offsets = [0]
+        for vocab_size in self.vocab_sizes:
+            vocab_offsets.append(vocab_offsets[-1] + vocab_size)
         
-        # Forward pass - use standard MLM mode (not sparse) for field-level masking
-        logits = self.model(masked_cat_input, masked_cont_input, mode="mlm")  # (B, L, total_vocab_size)
+        # Add continuous vocabulary sizes
+        cont_vocab_sizes = self.config.cont_vocab_sizes or {}
+        for feature in self.cont_features:
+            vocab_size = cont_vocab_sizes.get(feature, 100)  # Default to 100 bins
+            vocab_offsets.append(vocab_offsets[-1] + vocab_size)
         
-        # Compute loss using field-level mask
-        loss = compute_field_level_mlm_loss(
-            logits=logits,
-            targets_cat=cat_tgt,
-            targets_cont=qtarget,
-            mask=mask,
-            vocab_sizes=self.vocab_sizes,
-            cont_vocab_sizes=self.config.cont_vocab_sizes or {},
-            cont_features=self.cont_features,
-            criterion=self.criterion_cat
-        )
+        # Compute loss for categorical features
+        for i, feature in enumerate(self.cat_features):
+            start_idx = vocab_offsets[i]
+            end_idx = vocab_offsets[i + 1]
+            
+            feature_logits = logits[:, :, start_idx:end_idx]  # (B, L, V_i)
+            feature_labels = cat_labels[:, :, i]  # (B, L)
+            
+            # Only compute loss where labels != -100
+            valid_mask = feature_labels != -100
+            if valid_mask.any():
+                valid_logits = feature_logits[valid_mask]  # (N, V_i)
+                valid_labels = feature_labels[valid_mask]  # (N,)
+                
+                loss = F.cross_entropy(valid_logits, valid_labels)
+                total_loss = total_loss + loss
+                num_losses = num_losses + 1
         
-        # Count masked elements for logging
-        masked_elements = mask.sum().item()
+        # Compute loss for continuous features (quantized)
+        for i, feature in enumerate(self.cont_features):
+            cat_idx = len(self.cat_features) + i
+            start_idx = vocab_offsets[cat_idx]
+            end_idx = vocab_offsets[cat_idx + 1]
+            
+            feature_logits = logits[:, :, start_idx:end_idx]  # (B, L, V_i)
+            feature_labels = qtarget_labels[:, :, i]  # (B, L)
+            
+            # Only compute loss where labels != -100
+            valid_mask = feature_labels != -100
+            if valid_mask.any():
+                valid_logits = feature_logits[valid_mask]  # (N, V_i)
+                valid_labels = feature_labels[valid_mask]  # (N,)
+                
+                loss = F.cross_entropy(valid_logits, valid_labels)
+                total_loss = total_loss + loss
+                num_losses = num_losses + 1
         
-        return loss, {
-            "mask_prob": self.args.mask_prob,
-            "masked_elements": masked_elements,
-            "field_level_masking": True
-        }
+        # Average the losses
+        if num_losses > 0:
+            return total_loss / num_losses
+        else:
+            return torch.tensor(0.0, device=logits.device, requires_grad=True)
+
+    def _compute_efficient_mlm_loss_cat_only(
+        self,
+        logits: torch.Tensor,
+        cat_labels: torch.Tensor,
+        mask: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        Compute MLM loss for categorical features only.
+        Only computes loss on masked positions (labels != -100).
+        """
+        total_loss = torch.tensor(0.0, device=logits.device, requires_grad=True)
+        num_losses = 0
+        
+        # Get vocabulary offsets for each feature
+        vocab_offsets = [0]
+        for vocab_size in self.vocab_sizes:
+            vocab_offsets.append(vocab_offsets[-1] + vocab_size)
+        
+        # Compute loss for categorical features
+        for i, feature in enumerate(self.cat_features):
+            start_idx = vocab_offsets[i]
+            end_idx = vocab_offsets[i + 1]
+            
+            feature_logits = logits[:, :, start_idx:end_idx]  # (B, L, V_i)
+            feature_labels = cat_labels[:, :, i]  # (B, L)
+            
+            # Only compute loss where labels != -100
+            valid_mask = feature_labels != -100
+            if valid_mask.any():
+                valid_logits = feature_logits[valid_mask]  # (N, V_i)
+                valid_labels = feature_labels[valid_mask]  # (N,)
+                
+                loss = F.cross_entropy(valid_logits, valid_labels)
+                total_loss = total_loss + loss
+                num_losses = num_losses + 1
+        
+        # Average the losses
+        if num_losses > 0:
+            return total_loss / num_losses
+        else:
+            return torch.tensor(0.0, device=logits.device, requires_grad=True)
     
     def _forward_ar(
         self,
@@ -297,7 +446,7 @@ class PretrainTrainer:
             total_loss = total_loss + self.criterion_cat(
                 logits[:, start_idx:start_idx+vocab_len], all_targets[:, i]
             )
-            start_idx += vocab_len
+            start_idx = start_idx + vocab_len
         
         # Average loss across all features
         loss = total_loss / len(all_vocab_sizes)
@@ -352,5 +501,5 @@ class PretrainTrainer:
             self.best_val_loss = val_loss
             return False
         else:
-            self.epochs_without_improvement += 1
+            self.epochs_without_improvement = self.epochs_without_improvement + 1
             return self.epochs_without_improvement >= self.patience 
