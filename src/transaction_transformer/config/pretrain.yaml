@@ -1,0 +1,71 @@
+model:
+  model_type: "feature_prediction"
+  row_types: 1
+  freeze_embedding: false
+  emb_dropout: 0.1
+  clf_dropout: 0.1
+  checkpoint_dir: "data/models"
+  log_dir: "logs"
+  
+  field_transformer:
+    d_model: 72
+    n_heads: 8
+    depth: 2
+    ffn_mult: 4
+    dropout: 0.1
+    layer_norm_eps: 1.0e-6
+    norm_first: true
+    is_causal: false
+  
+  sequence_transformer:
+    d_model: 512
+    n_heads: 8
+    depth: 6
+    ffn_mult: 4
+    dropout: 0.1
+    layer_norm_eps: 1.0e-6
+    norm_first: true
+    is_causal: true
+  
+  embedding:
+    emb_dim: 72
+    dropout: 0.1
+    padding_idx: 0
+    freq_encoding_L: 8
+    mask_token_init_std: 0.02
+  
+  training:
+    total_epochs: 10
+    batch_size: 32
+    learning_rate: 1.0e-4
+    mode: "ar"  # "mlm" or "ar"
+    p_field: 0.15
+    p_row: 0.10
+    joint_timestamp_masking: true
+    optimizer: "adamw"
+    scheduler: "cosine"
+    mixed_precision: false
+    early_stopping_patience: 5
+    device: "cuda"
+    num_workers: 4
+  
+  data:
+    data_dir: "data"
+    preprocessed_path: "src/transaction_transformer/data/preprocessing/legit_processed.pt"
+    window: 10
+    stride: 5
+    num_bins: 100
+    group_by: "User"
+    include_all_fraud: false
+    padding_idx: 0
+    mask_idx: 1
+    unk_idx: 2
+
+metrics:
+  run_name: pretrain
+  wandb: true
+  wandb_project: "feature-predictor"
+  seed: 42
+  deterministic: false
+  log_gradients: false
+  log_parameters: false

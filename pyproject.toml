@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "transaction_transformer"
+version = "0.1.0"
+description = "An autoregressive Transformer for credit-card fraud detection"
+authors = [
+    { name = "Parker Pettit", email = "ppettit@mit.edu" }
+]
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "torch>=1.12.0",
+    "pandas>=1.5.0",
+    "numpy>=1.21.0",
+    "scikit-learn>=1.1.0",
+    "lightgbm>=3.3.0",
+    "wandb>=0.13.0",
+    "pyyaml>=6.0",
+    "tqdm>=4.64.0",
+    "matplotlib>=3.5.0",
+    "seaborn>=0.11.0",
+    "plotly>=5.10.0",
+    "ydata-profiling>=4.0.0",
+    "pgeocode>=0.4.0"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "black",
+    "flake8",
+    "mypy"
+]
+
+dynamic = ["classifiers"]
