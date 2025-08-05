@@ -11,7 +11,7 @@ class FieldTransformer(nn.Module):
     Parameters
     ----------
     config : TransformerConfig
-        Hyper-parameters for the encoder layer (d_model, n_heads, dropout, …)
+        Hyper-parameters for the encoder layer (d_model, n_heads, dropout, ...)
     """
 
 

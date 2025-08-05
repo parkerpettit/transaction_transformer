@@ -2,7 +2,6 @@ import logging
 from typing import List, Dict
 
 import pandas as pd
-from regex import D
 import torch
 from torch.utils.data import Dataset, DataLoader
 import torch.nn.functional as F

@@ -397,7 +397,7 @@ def main(argv: Optional[List[str]] = None):
     args = ap.parse_args(argv)
 
     # ---------------- load & clean ----------------------------------------
-    print("🔄 Loading CSV … (this can take a minute)")
+            print("Loading CSV ... (this can take a minute)")
     df = pd.read_csv(args.csv, low_memory=False)
     clean_dataframe(df)
 
@@ -416,7 +416,7 @@ def main(argv: Optional[List[str]] = None):
     }
 
     # ---------------- profiling -----------------------------------------
-    print("⚡ Running ydata-profiling on full dataset … (grab coffee)")
+            print("Running ydata-profiling on full dataset ... (grab coffee)")
     prof_html = ProfileReport(df, title="Profile (full)", progress_bar=False, tsmode=False).to_html()
 
     body: List[str] = []
@@ -502,7 +502,7 @@ def main(argv: Optional[List[str]] = None):
     html_out = HTML_TEMPLATE.format(title="Card-Transaction EDA (Full)",
                                     body=prof_html + "\n" + "\n".join(body))
     args.out.write_text(html_out, encoding="utf-8")
-    print(f"✅ Report written to {args.out}")
+            print(f"Report written to {args.out}")
 
 
 if __name__ == "__main__":

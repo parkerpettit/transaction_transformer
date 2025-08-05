@@ -3,8 +3,6 @@ Finetuning script for fraud detection model.
 
 Supports both MLM and AR finetuning modes.
 """
-
-from pandas.core.arrays.masked import transpose_homogeneous_masked_arrays
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -63,7 +61,7 @@ def finetune(
         batch_size=config.model.training.batch_size,
         shuffle=True,
         collate_fn=train_collator,
-        num_workers=4,
+        num_workers=config.model.training.num_workers,
         persistent_workers=True,
         pin_memory=True
     )
@@ -73,7 +71,7 @@ def finetune(
         batch_size=config.model.training.batch_size,
         shuffle=False,
         collate_fn=val_collator,
-        num_workers=4,
+        num_workers=config.model.training.num_workers,
         persistent_workers=True,
         pin_memory=True
     )
@@ -123,7 +121,7 @@ def main():
     model = FraudDetectionModel(config=config.model, schema=schema)
     
     # Load pretrained embedding model
-    pretrained_checkpoint_path = Path(config.model.pretrain_checkpoint_dir) / f"mlm_best_model.pt"
+    pretrained_checkpoint_path = Path(config.model.pretrain_checkpoint_dir) / f"{config.model.training.model_type}_pretrain_best_model.pt"
     model.load_pretrained_embedding_model(str(pretrained_checkpoint_path))
     
     device = torch.device(config.get_device())

@@ -107,26 +107,38 @@ class ARTabCollator(BaseTabCollator):
         cats  = torch.stack([b["cat"]  for b in batch], 0)  # (B,L,C)
         conts = torch.stack([b["cont"] for b in batch], 0)  # (B,L,F)
         labels = torch.stack([b["label"] for b in batch], 0)  # (B,L)
+        B, L, C = cats.shape
+        _, _, F = conts.shape
+        device = cats.device
 
-        # For AR training: use first L-1 transactions as input, predict transaction L
-        cats_in = cats[:, :-1, :]  # (B, L-1, C) - input sequence
-        cont_in = conts[:, :-1, :]  # (B, L-1, F) - input sequence
+        # For AR training: all-steps supervision (predict next row at each position)
+        # Inputs are unmasked sequences
+        cats_in = cats  # (B, L, C) - full sequence
+        cont_in = conts  # (B, L, F) - full sequence
         
-        # Labels are the last transaction (vectorized binning)
-        labels_cat = cats[:, -1, :]  # (B, C) - last transaction
-        labels_cont = conts[:, -1, :]  # (B, F) - last transaction
+        # Labels are shifted left by 1 (predict row t+1 from rows <= t)
+        labels_cat = torch.full((B, L, C), fill_value=self.ignore_idx, dtype=torch.long, device=device)
+        labels_cont = torch.full((B, L, F), fill_value=self.ignore_idx, dtype=torch.long, device=device)
         
-        # Vectorized continuous binning
-        labels_cont = torch.stack([
-            self.schema.cont_binners[name].bin(labels_cont[:, f]) 
+        # Shift categorical labels: labels[:, :-1] = cats[:, 1:]
+        labels_cat[:, :-1] = cats[:, 1:]
+        
+        # Shift and bin continuous labels
+        cont_shifted = conts[:, 1:]  # (B, L-1, F)
+        # Bin all continuous values at once
+        all_bins = torch.stack([
+            self.schema.cont_binners[name].bin(cont_shifted[..., f])
             for f, name in enumerate(self.schema.cont_features)
-        ], dim=1)  # (B, F)
+        ], dim=-1)  # (B, L-1, F)
+        labels_cont[:, :-1] = all_bins
+        
+        # Last position has no target (ignore_idx already set)
         
         return {
-            "cat": cats_in,                 # (B,L-1,C) long - input sequence
-            "cont": cont_in,                # (B,L-1,F) float - input sequence
-            "labels_cat": labels_cat,       # (B,C) long - target transaction
-            "labels_cont": labels_cont,     # (B,F) long - target transaction (binned values)
+            "cat": cats_in,                 # (B,L,C) long - input sequence
+            "cont": cont_in,                # (B,L,F) float - input sequence
+            "labels_cat": labels_cat,       # (B,L,C) long - shifted targets
+            "labels_cont": labels_cont,     # (B,L,F) long - shifted targets (binned)
             "downstream_label": labels,     # (B,L) - passthrough if you need it
         }
 

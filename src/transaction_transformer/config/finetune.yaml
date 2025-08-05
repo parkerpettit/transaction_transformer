@@ -74,6 +74,7 @@ model:
     padding_idx: 0
     mask_idx: 1
     unk_idx: 2
+    ignore_idx: -100
 
 metrics:
   run_name: finetune

@@ -4,7 +4,6 @@ Pretraining script for feature prediction transformer.
 Supports both MLM and AR pretraining modes.
 """
 
-from pandas.core.arrays.masked import transpose_homogeneous_masked_arrays
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -68,7 +67,7 @@ def pretrain(
         batch_size=config.model.training.batch_size,
         shuffle=True,
         collate_fn=train_collator,
-        num_workers=4,
+        num_workers=config.model.training.num_workers,
         persistent_workers=True,
         pin_memory=True
     )
@@ -78,7 +77,7 @@ def pretrain(
         batch_size=config.model.training.batch_size,
         shuffle=False,
         collate_fn=val_collator,
-        num_workers=4,
+        num_workers=config.model.training.num_workers,
         persistent_workers=True,
         pin_memory=True
     )
@@ -135,7 +134,7 @@ def main():
     
     
     # Check if checkpoint exists and load it
-    checkpoint_path = Path(config.model.pretrain_checkpoint_dir) / f"{config.model.training.model_type}_best_model.pt"
+    checkpoint_path = Path(config.model.pretrain_checkpoint_dir) / f"{config.model.training.model_type}_{config.model.mode}_best_model.pt"
     if checkpoint_path.exists():
         print(f"Loading checkpoint from {checkpoint_path}")
         trainer.checkpoint_manager.load_checkpoint(str(checkpoint_path), trainer.model, trainer.optimizer, trainer.scheduler)

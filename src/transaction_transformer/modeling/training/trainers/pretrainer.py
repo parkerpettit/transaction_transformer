@@ -27,102 +27,93 @@ class Pretrainer(BaseTrainer):
         scheduler: Optional[torch.optim.lr_scheduler._LRScheduler] = None,
     ):
         super().__init__(model, schema, config, device, train_loader, val_loader, optimizer, scheduler)
-        if config.model.training.model_type == "ar":
-            self.loss_fn = nn.CrossEntropyLoss()
-        elif config.model.training.model_type == "mlm":
-            self.loss_fn = nn.KLDivLoss(reduction="batchmean")   # expects log-probs + soft targets
-        else:
-            raise ValueError(f"Invalid training model_type: {config.model.training.model_type}")
+        # Use CrossEntropyLoss for both AR and MLM - it handles everything!
+        # For categorical features: use built-in label smoothing
+        self.cat_loss_fn = nn.CrossEntropyLoss(ignore_index=config.model.data.ignore_idx, label_smoothing=0.1)
+        # For continuous features: we'll still use custom neighborhood smoothing
+        self.cont_loss_fn = nn.CrossEntropyLoss(ignore_index=config.model.data.ignore_idx)
         self.total_features = len(self.schema.cat_features) + len(self.schema.cont_features)
         print(f"Total features: {self.total_features}")
         print(f"Model type: {config.model.training.model_type}")
     
     def compute_loss(self, logits: Dict[str, torch.Tensor], labels_cat: torch.Tensor, labels_cont: torch.Tensor) -> torch.Tensor:
-        if self.config.model.training.model_type == "mlm":
-            return self.compute_mlm_loss(logits, labels_cat, labels_cont)
-        elif self.config.model.training.model_type == "ar":
-            return self.compute_ar_loss(logits, labels_cat, labels_cont)
-        else:
-            raise ValueError(f"Invalid training model_type: {self.config.model.training.model_type}")
+        # Unified loss computation for both AR and MLM!
+        return self.compute_unified_loss(logits, labels_cat, labels_cont)
 
-    # ------------------------------------------------------------------ #
-    def compute_ar_loss(self, logits: Dict[str, torch.Tensor], labels_cat: torch.Tensor, labels_cont: torch.Tensor) -> torch.Tensor:
-        """Compute loss for autoregressive training using unified loss. 
-        labels_cat and labels_cont are the ground truth labels for the categorical and continuous features, respectively, of shape (B, C) and (B, F).
-        logits is a dictionary of length K = C + F, where each key is a feature name and each value is a (B, V_feature) tensor of logits. 
-        For AR training, we want the model to predict the next transaction, so we use the last position of the output.
-        Returns the total loss.
-
-        """
-        total_loss = torch.tensor(0.0, device=self.device)
+    def compute_unified_loss(self, logits: Dict[str, torch.Tensor], labels_cat: torch.Tensor, labels_cont: torch.Tensor) -> torch.Tensor:
+        """Unified loss computation for both AR and MLM.
         
-        # For AR training, we want to predict the next transaction given the context
-        # The model outputs logits for the next transaction at the last position
-        
-        # Handle categorical features
-        for i, feature_name in enumerate(self.schema.cat_features):
-            feature_logits = logits[feature_name]  # (B, vocab_size) - predict next transaction
-            feature_targets = labels_cat[:, i]  # (B,) - target id for this feature
-            feature_targets = self.label_smoothing(feature_targets, self.schema.cat_encoders[feature_name].vocab_size)
-            total_loss = total_loss + self.loss_fn(feature_logits, feature_targets)
+        Args:
+            logits: dict[name] : (B, L, V_f) - predictions at each position
+            labels_cat: (B, L, C) - categorical targets (original for MLM, shifted for AR)
+            labels_cont: (B, L, F) - continuous targets (binned)
             
-        # Handle continuous features  
-        for i, feature_name in enumerate(self.schema.cont_features):
-            feature_logits = logits[feature_name]  # (B, num_bins) - predict next transaction
-            feature_targets = labels_cont[:, i]  # (B,) - binned target id for this feature
-            feature_targets = self.neighbor_label_smoothing(feature_targets, self.schema.cont_binners[feature_name].num_bins)
-            total_loss = total_loss + self.loss_fn(feature_logits, feature_targets)
-        
-        return total_loss / self.total_features # average loss per feature
-
-    def compute_mlm_loss(
-        self,
-        logits: Dict[str, torch.Tensor],       # dict[name] : (B, L, V_f)
-        labels_cat: torch.Tensor,              # (B, L, C)  long
-        labels_cont: torch.Tensor,             # (B, L, F)  long
-        ignore_idx: int = -100,
-        eps_cat: float = 0.1,
-        eps_cont: float = 0.1,
-        neigh: int = 5,
-    ) -> torch.Tensor:
-        """
-        Unified masked-token loss with per-field label smoothing.
+        Returns:
+            Average loss across all features
         """
         total_loss = torch.tensor(0.0, device=self.device)
-
-        # ----------------------------- #
-        # categorical fields
-        # ----------------------------- #
-        total_masked = 0
+        
+        # Handle categorical features with built-in label smoothing
         for f_idx, name in enumerate(self.schema.cat_features):
-            V = self.schema.cat_encoders[name].vocab_size
-            lbl     = labels_cat[:, :, f_idx].flatten()                        # (B*L,)
-            mask    = lbl != ignore_idx                                        # bool
-            if mask.any():
-                total_masked += mask.sum().item()
-                tgt_ids = lbl[mask]                                            # (N,)
-                tgt_prob = self.label_smoothing(tgt_ids, V, epsilon=eps_cat)   # (N,V)
-                logp     = F.log_softmax(logits[name].flatten(0, 1)[mask], -1) # (N,V)
-                total_loss += self.loss_fn(logp, tgt_prob)
-
-        # ----------------------------- #
-        # continuous / binned fields
-        # ----------------------------- #
+            logits_f = logits[name]  # (B, L, V)
+            labels_f = labels_cat[:, :, f_idx]  # (B, L)
+            # CrossEntropyLoss handles ignore_index and label_smoothing automatically!
+            total_loss += self.cat_loss_fn(logits_f.flatten(0, 1), labels_f.flatten())
+        
+        # Handle continuous features with custom neighborhood smoothing
         for f_idx, name in enumerate(self.schema.cont_features):
+            logits_f = logits[name]  # (B, L, V)
+            labels_f = labels_cont[:, :, f_idx]  # (B, L)
+            
+            # For continuous features, we still want neighborhood smoothing
+            # So we create soft targets and use CrossEntropyLoss with probabilities
             V = self.schema.cont_binners[name].num_bins
-            lbl     = labels_cont[:, :, f_idx].flatten()
-            mask    = lbl != ignore_idx
+            lbl = labels_f.flatten()  # (B*L,)
+            logits_flat = logits_f.flatten(0, 1)  # (B*L, V)
+            
+            # Create soft targets with neighborhood smoothing
+            mask = lbl != self.config.model.data.ignore_idx
             if mask.any():
-                total_masked += mask.sum().item()
-                tgt_ids = lbl[mask]
-                tgt_prob = self.neighbor_label_smoothing(
-                    tgt_ids, V, epsilon=eps_cont, neighborhood=neigh
-                )                                                               # (N,V)
-                logp = F.log_softmax(logits[name].flatten(0, 1)[mask], -1)      # (N,V)
-                total_loss += self.loss_fn(logp, tgt_prob)
+                # Create soft target tensor
+                soft_targets = torch.zeros_like(logits_flat)  # (B*L, V)
+                soft_targets[~mask] = 0  # Ignored positions stay zero
+                
+                # Apply neighborhood smoothing for valid positions
+                valid_indices = torch.where(mask)[0]
+                valid_labels = lbl[mask]
+                for i, (idx, label) in enumerate(zip(valid_indices, valid_labels)):
+                    soft_targets[idx] = self._create_neighborhood_distribution(int(label.item()), V, epsilon=0.1, neighborhood=5)
+                
+                # CrossEntropyLoss can handle soft targets!
+                total_loss += self.cont_loss_fn(logits_flat, soft_targets)
+        
+        return total_loss / self.total_features
+    
+    def _create_neighborhood_distribution(self, target_bin: int, num_bins: int, epsilon: float = 0.1, neighborhood: int = 5) -> torch.Tensor:
+        """Create a soft probability distribution with neighborhood smoothing."""
+        probs = torch.zeros(num_bins, device=self.device)
+        
+        # Main bin gets most of the probability mass
+        probs[target_bin] = 1.0 - epsilon
+        
+        # Distribute epsilon among neighbors
+        neighbor_count = 0
+        for offset in range(1, neighborhood + 1):
+            if target_bin - offset >= 0:
+                neighbor_count += 1
+            if target_bin + offset < num_bins:
+                neighbor_count += 1
+        
+        if neighbor_count > 0:
+            neighbor_prob = epsilon / neighbor_count
+            for offset in range(1, neighborhood + 1):
+                if target_bin - offset >= 0:
+                    probs[target_bin - offset] = neighbor_prob
+                if target_bin + offset < num_bins:
+                    probs[target_bin + offset] = neighbor_prob
+        
+        return probs
 
-        # average over number of **features** that contributed
-        return total_loss / total_masked
 
 
 
@@ -187,15 +178,9 @@ class Pretrainer(BaseTrainer):
 
                 targets = {}
                 for i, feature_name in enumerate(self.schema.cat_features):
-                    if self.config.model.training.model_type == "ar":
-                        targets[feature_name] = labels_cat[:, i]  # (B,)
-                    else:
-                        targets[feature_name] = labels_cat[:, :, i]  # (B, L)
+                    targets[feature_name] = labels_cat[:, :, i]  # (B, L) for both AR and MLM
                 for i, feature_name in enumerate(self.schema.cont_features):
-                    if self.config.model.training.model_type == "ar":
-                        targets[feature_name] = labels_cont[:, i]  # (B,)
-                    else:
-                        targets[feature_name] = labels_cont[:, :, i]  # (B, L)
+                    targets[feature_name] = labels_cont[:, :, i]  # (B, L) for both AR and MLM
                 targets = {k: v.to(self.device) for k, v in targets.items()}
             
                 self.metrics.update_transaction_prediction(logits, targets)

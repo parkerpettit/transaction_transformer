@@ -18,8 +18,7 @@ class SinCosPositionalEncoding(nn.Module):
 
     def _build(self, max_len: int, device, dtype):
         pos = torch.arange(max_len, device=device, dtype=dtype).unsqueeze(1)     # (L,1)
-        div = torch.exp(torch.arange(0, self.d_model, 2, device=device, dtype=dtype)
-                        * (-math.log(10000.0) / self.d_model))                   # (D//2,)
+        div = torch.exp(torch.arange(0, self.d_model, 2, device=device, dtype=dtype) * (-math.log(10000.0) / self.d_model))                   # (D//2,)
         pe = torch.zeros(max_len, self.d_model, device=device, dtype=dtype)      # (L,D)
         pe[:, 0::2] = torch.sin(pos * div)
         pe[:, 1::2] = torch.cos(pos * div)

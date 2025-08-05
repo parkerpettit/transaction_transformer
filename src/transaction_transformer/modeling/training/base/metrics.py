@@ -86,37 +86,26 @@ class MetricsTracker:
         logits: Dict[str, torch.Tensor],
         targets: Dict[str, torch.Tensor],
     ) -> None: # note that outputs is a dict mapping feature name to logits. so for example
-    # outputs["Merchant_id"] is a tensor of shape (batch_size, L, merchant_id_vocab_size) if mlm, (batch_size, merchant_id_vocab_size) if ar
+    # outputs["Merchant_id"] is a tensor of shape (batch_size, L, merchant_id_vocab_size) for both MLM and AR
         """Update transaction prediction metrics (per-feature accuracy)."""
         
         # Update feature-wise accuracy
         for feature_name, logits_f in logits.items():
             targets_f = targets[feature_name]
             
-            # Determine the correct dimension for argmax based on tensor shapes
-            if logits_f.dim() == 2:  # AR: (B, V)
-                preds_f = logits_f.argmax(dim=1)
-                # For AR, all positions are valid targets
-                correct = (preds_f == targets_f).sum().item()
-                total_positions = targets_f.numel()
-            elif logits_f.dim() == 3:  # MLM: (B, L, V)
-                preds_f = logits_f.argmax(dim=2)
-                # For MLM, only calculate accuracy on masked positions (non-ignore)
-                mask = targets_f != self.ignore_index
-                if mask.any():
-                    correct = (preds_f[mask] == targets_f[mask]).sum().item()
-                    total_positions = mask.sum().item()
-                    # print(
-                    #     f"[{feature_name}] MLM: masked positions = {mask.sum().item()} / total = {targets_f.numel()} "
-                    #     f"({mask.sum().item()/targets_f.numel():.2%} masked); "
-                    #     f"ignore_index count = {(targets_f == self.ignore_index).sum().item()}; "
-                    #     f"accuracy: {correct / total_positions:.2%}"
-                    # )
-                else:
-                    correct = 0
-                    total_positions = 0
+            # Both AR and MLM now return (B, L, V) logits
+            # AR: compute accuracy on shifted positions (non-ignore)
+            # MLM: compute accuracy on masked positions (non-ignore)
+            preds_f = logits_f.argmax(dim=2)  # (B, L)
+            
+            # Only calculate accuracy on non-ignore positions
+            mask = targets_f != self.ignore_index
+            if mask.any():
+                correct = (preds_f[mask] == targets_f[mask]).sum().item()
+                total_positions = mask.sum().item()
             else:
-                raise ValueError(f"Unexpected logits shape for {feature_name}: {logits_f.shape}")
+                correct = 0
+                total_positions = 0
             
             self.feature_correct[feature_name] += int(correct)
             self.feature_total[feature_name] += int(total_positions)
@@ -128,8 +117,8 @@ class MetricsTracker:
         schema: FieldSchema,
     ) -> None:
         """
-        Pretty print predictions for a single sample (all features). Logits is a dict of feature name to logits tensor of shape (B, L, V_field) if mlm, (B, V_field) if ar.
-        Targets is a dict of feature name to targets tensor of shape (B, L) if mlm, (B,) if ar.
+        Pretty print predictions for a single sample (all features). Logits is a dict of feature name to logits tensor of shape (B, L, V_field) for both MLM and AR.
+        Targets is a dict of feature name to targets tensor of shape (B, L) for both MLM and AR.
         Schema is the FieldSchema object.
         """
         # Helper to decode categorical codes
@@ -143,56 +132,35 @@ class MetricsTracker:
             print("No samples to print.")
             return
 
-        # Determine if this is MLM model_type (any feature logits dim == 3)
-        is_mlm = any(logits[feat].dim() == 3 for feat in logits.keys())
-
-        if is_mlm:
-            # Scan through each batch, then each row
-            for batch_idx in range(batch_size):
-                L = logits[list(logits.keys())[0]].shape[1]
-                for row_idx in range(L):
-                    # Check if any features are masked in this row
-                    masked_feats = []
-                    for feat in logits.keys():
-                        if targets[feat][batch_idx, row_idx] != self.ignore_index:
-                            masked_feats.append(feat)
-                    
-                    if masked_feats:
-                        print(f"\nBatch {batch_idx}, Row {row_idx} (masked positions):")
-                        print(f"{'Feature':<15} {'Target':<25} {'Predicted':<25} {'Correct'}")
-                        print("─" * 70)
-                        # Print predictions for all masked features in this row
-                        for feat in masked_feats:
-                            pred_code = logits[feat][batch_idx, row_idx].argmax().item()
-                            tgt_code = targets[feat][batch_idx, row_idx].item()
-                            correct = "YES" if pred_code == tgt_code else "NO"
-                            
-                            if feat in schema.cat_features:
-                                tgt_str = decode_cat(tgt_code, feat)
-                                pred_str = decode_cat(pred_code, feat)
-                                print(f"{feat:<15} {tgt_str:<25} {pred_str:<25} {correct}")
-                            else:
-                                print(f"{feat:<15} {tgt_code:<25} {pred_code:<25} {correct}")
-                        print("─" * 40)
-                        return  # Break after finding first masked row
-        else:
-            # AR model_type: print all features for the first sample
-            sample_idx = 0
-            print(f"\nSample {sample_idx} (AR model_type):")
-            print(f"{'Feature':<15} {'Target':<25} {'Predicted':<25} {'Correct'}")
-            print("─" * 70)
-            for feat in logits.keys():
-                pred_code = logits[feat][sample_idx].argmax().item()
-                tgt_code = targets[feat][sample_idx].item()
-                correct = "YES" if pred_code == tgt_code else "NO"
+        # Both AR and MLM now have (B, L, V) format
+        # Scan through each batch, then each row
+        for batch_idx in range(batch_size):
+            L = logits[list(logits.keys())[0]].shape[1]
+            for row_idx in range(L):
+                # Check if any features are valid targets in this row (non-ignore)
+                valid_feats = []
+                for feat in logits.keys():
+                    if targets[feat][batch_idx, row_idx] != self.ignore_index:
+                        valid_feats.append(feat)
                 
-                if feat in schema.cat_features:
-                    tgt_str = decode_cat(tgt_code, feat)
-                    pred_str = decode_cat(pred_code, feat)
-                    print(f"{feat:<15} {tgt_str:<25} {pred_str:<25} {correct}")
-                else:
-                    print(f"{feat:<15} {tgt_code:<25} {pred_code:<25} {correct}")
-            print("─" * 40)
+                if valid_feats:
+                    print(f"\nBatch {batch_idx}, Row {row_idx} (valid targets):")
+                    print(f"{'Feature':<15} {'Target':<25} {'Predicted':<25} {'Correct'}")
+                    print("-" * 70)
+                    # Print predictions for all valid features in this row
+                    for feat in valid_feats:
+                        pred_code = logits[feat][batch_idx, row_idx].argmax().item()
+                        tgt_code = targets[feat][batch_idx, row_idx].item()
+                        correct = "YES" if pred_code == tgt_code else "NO"
+                        
+                        if feat in schema.cat_features:
+                            tgt_str = decode_cat(tgt_code, feat)
+                            pred_str = decode_cat(pred_code, feat)
+                            print(f"{feat:<15} {tgt_str:<25} {pred_str:<25} {correct}")
+                        else:
+                            print(f"{feat:<15} {tgt_code:<25} {pred_code:<25} {correct}")
+                    print("-" * 40)
+                    return  # Break after finding first valid row
 
 
     def threshold_search(self, target_fpr: float, probs: np.ndarray, labels: np.ndarray) -> float:
@@ -302,8 +270,11 @@ class MetricsTracker:
         
         # Average accuracy across features
         if self.feature_total:
-            avg_acc = sum(self.feature_correct.values()) / sum(self.feature_total.values())
-            metrics["avg_acc"] = avg_acc
+            total_correct = sum(self.feature_correct.values())
+            total_positions = sum(self.feature_total.values())
+            if total_positions > 0:
+                avg_acc = total_correct / total_positions
+                metrics["avg_acc"] = avg_acc
         
         self.metrics.update(metrics)
     
@@ -362,8 +333,13 @@ class MetricsTracker:
         
         # Feature accuracy bar chart
         feature_names = list(self.feature_total.keys())
-        accuracies = [self.feature_correct[name] / self.feature_total[name] 
-                     for name in feature_names]
+        accuracies = []
+        for name in feature_names:
+            if self.feature_total[name] > 0:
+                acc = self.feature_correct[name] / self.feature_total[name]
+                accuracies.append(acc)
+            else:
+                accuracies.append(0.0)
         fig, ax = plt.subplots(figsize=(12, 6))
         bars = ax.bar(feature_names, accuracies)
         ax.set_title(f"{model_type.capitalize()} Per-Feature Accuracy")

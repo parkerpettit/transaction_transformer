@@ -55,7 +55,7 @@ class RowExpander(nn.Module):
         d_field = config.field_transformer.d_model
         d_row = config.sequence_transformer.d_model
         row_types = config.row_types
-        self.is_causal = config.training.model_type == "ar"
+        # No longer needed since both AR and MLM use same format
         self.K = K
         self.d_field = d_field
 
@@ -67,15 +67,10 @@ class RowExpander(nn.Module):
 
     def forward(self, z_row: torch.Tensor, row_type: int = 0) -> torch.Tensor:
         """
-        z_row: (B, L, M_row) if mlm, (B, M_row) if ar
-        returns: (B, L, K, D_field)  if mlm, (B, K, D_field) if ar
+        z_row: (B, L, M_row) - always expect full sequence
+        returns: (B, L, K, D_field) - always return full sequence
         """
-        if self.is_causal: # ar model_type - only need last row
-            B, _ = z_row.shape
-            out = self.expand[row_type](z_row)  # (B, K*D)
-            return out.view(B, self.K, self.d_field) # (B, K, D)
-        else: # mlm model_type - need all L rows
-            B, L, _ = z_row.shape
-            out = self.expand[row_type](z_row)  # (B, L, K*D)
-            return out.view(B, L, self.K, self.d_field) # (B, L, K, D)
+        B, L, _ = z_row.shape
+        out = self.expand[row_type](z_row)  # (B, L, K*D)
+        return out.view(B, L, self.K, self.d_field)  # (B, L, K, D)
 

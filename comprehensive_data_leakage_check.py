@@ -61,7 +61,7 @@ def compute_dataset_hashes(dataset: TxnDataset) -> Set[str]:
     
     hash_set: Set[str] = set()
     n = len(dataset)
-    print(f"    Computing hashes for {n} windows…")
+            print(f"    Computing hashes for {n} windows...")
     for idx in range(n):
         sample = dataset[idx]
         # Convert tensors to bytes
@@ -138,7 +138,7 @@ def compare_window_data(samples1: List[Dict], samples2: List[Dict],
 
 def check_chronological_order(df: pd.DataFrame, name: str) -> None:
     """Ensure each user's rows are chronologically sorted."""
-    print(f"  Chronological order check for {name} …")
+            print(f"  Chronological order check for {name} ...")
     bad_users = []
     grouped = df.groupby('User', sort=False)
     for user, grp in grouped:
@@ -167,7 +167,7 @@ def compute_row_hashes(df: pd.DataFrame) -> Set[str]:
 
 def row_level_checks(dfs: Dict[str, pd.DataFrame], dataset_name: str) -> None:
     """Check for duplicate rows across splits within a dataset type."""
-    print(f"\nRow-duplication check for {dataset_name} dataset …")
+            print(f"\nRow-duplication check for {dataset_name} dataset ...")
     row_hashes = {split: compute_row_hashes(df) for split, df in dfs.items()}
     pairs = [('train','val'), ('train','test'), ('val','test')]
     leak = False
@@ -192,7 +192,7 @@ def compare_all_datasets(full_datasets: Dict[str, TxnDataset],
     print(f"{'='*80}")
     
     # Compute hashes for all datasets
-    print("\nComputing hashes for all datasets (this may take a while)…")
+            print("\nComputing hashes for all datasets (this may take a while)...")
     hash_sets: Dict[str, Set[str]] = {}
     
     for split in ['train', 'val', 'test']:
@@ -206,7 +206,7 @@ def compare_all_datasets(full_datasets: Dict[str, TxnDataset],
             print(f"  {name}: {len(hash_sets[name])} unique hashes")
     
     # Compare all pairs of hash sets
-    print(f"\nComparing all dataset pairs (hash‐based)…")
+            print(f"\nComparing all dataset pairs (hash-based)...")
     comparison_results = {}
     dataset_names = list(hash_sets.keys())
     for i, name1 in enumerate(dataset_names):

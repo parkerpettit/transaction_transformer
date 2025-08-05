@@ -71,7 +71,7 @@ if __name__ == "__main__":
     # ---------------------------------------------------------------------
     #                      INITIAL CSV PRE-PROCESSING
     # ---------------------------------------------------------------------
-    print("[1] Running initial CSV preprocessing …")
+    print("[1] Running initial CSV preprocessing ...")
     full_train_raw, full_val_raw, full_test_raw = preprocess(Path("data/raw/card_transaction.v1.csv"))
 
     # ---------------------------------------------------------------------
@@ -89,14 +89,14 @@ if __name__ == "__main__":
     # ---------------------------------------------------------------------
     #                  FIT + APPLY FOR FULL DATASET
     # ---------------------------------------------------------------------
-    print("[2] Fitting encoders/scaler for FULL dataset (train split only)…")
+    print("[2] Fitting encoders/scaler for FULL dataset (train split only)...")
     schema_full = build_schema(  # type: ignore[arg-type]
         full_train_raw,
         cat_features=cat_features,
         cont_features=cont_features,
     )
 
-    print("[3] Encoding + normalizing FULL dataset …")
+    print("[3] Encoding + normalizing FULL dataset ...")
     full_train_df, full_val_df, full_test_df = encode_and_normalize(
         [full_train_raw, full_val_raw, full_test_raw], schema_full
     )
@@ -104,14 +104,14 @@ if __name__ == "__main__":
     # ---------------------------------------------------------------------
     #                 FIT + APPLY ARTEFACTS FOR LEGIT-ONLY DATASET
     # ---------------------------------------------------------------------
-    print("[4] Fitting encoders/scaler for LEGIT dataset (train split only)…")
+    print("[4] Fitting encoders/scaler for LEGIT dataset (train split only)...")
     schema_legit = build_schema(
         legit_train_raw, # type: ignore
         cat_features=cat_features,
         cont_features=cont_features,
     )
 
-    print("[5] Encoding + normalizing LEGIT dataset …")
+    print("[5] Encoding + normalizing LEGIT dataset ...")
     legit_train_df, legit_val_df, legit_test_df = encode_and_normalize(
         [legit_train_raw, legit_val_raw, legit_test_raw], schema_legit # type: ignore
     )
@@ -129,7 +129,7 @@ if __name__ == "__main__":
     # ---------------------------------------------------------------------
     #                                SAVE
     # ---------------------------------------------------------------------
-    print("[6] Saving processed datasets and schemas …")
+    print("[6] Saving processed datasets and schemas ...")
     import torch
 
     torch.save(
@@ -167,7 +167,7 @@ if __name__ == "__main__":
             # plt.show()
             print(f"[{dataset_name}] {feat}: Bin counts: {np.bincount(bin_ids, minlength=binner.num_bins)}")
 
-    # print("[7] Plotting quantile bin distributions for all continuous features …")
+    # print("[7] Plotting quantile bin distributions for all continuous features ...")
     # for df, schema, name in [
     #     (full_train_df, schema_full, "Full Train"),
     #     (full_val_df, schema_full, "Full Val"),

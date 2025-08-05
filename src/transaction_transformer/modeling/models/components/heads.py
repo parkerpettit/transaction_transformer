@@ -42,23 +42,20 @@ class FeaturePredictionHead(nn.Module):
             )
         self.heads = heads
         self.all_names = all_names
-        self.is_causal = config.training.model_type == "ar"
+        # No longer needed since both AR and MLM use same format
 
     def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
         """
-        x: (B, L, M) input from the sequence transformer if mlm, (B, M) if ar
-        returns: dict[name] -> (B, L, V_field) which are the logits for each feature if mlm,
-                (B, V_field) if ar, where V_field is the vocabulary size for that feature.
+        x: (B, L, M) input from the sequence transformer
+        returns: dict[name] -> (B, L, V_field) which are the logits for each feature,
+                where V_field is the vocabulary size for that feature.
                 Dict is of length K = C + F. L is the number of rows in the sequence.
        """
         logits: dict[str, torch.Tensor] = {}
-        z_row = self.row_expander(x) # (B, L, M) -> (B, L, K, D_field) if mlm, (B, K, D_field) if ar
+        z_row = self.row_expander(x)  # (B, L, M) -> (B, L, K, D_field)
         for k, name in enumerate(self.all_names):
-            if self.is_causal: # ar model_type
-                logits[name] = self.heads[name](z_row[:, k, :]) # (B, K, D_field) -> (B, V_field)
-            else: # mlm model_type
-                logits[name] = self.heads[name](z_row[:, :, k, :]) # (B, L, K, D_field) -> (B, L, V_field)
-        return logits # dict[name]: (B, L, V_field) if mlm, (B, V_field) if ar
+            logits[name] = self.heads[name](z_row[:, :, k, :])  # (B, L, K, D_field) -> (B, L, V_field)
+        return logits  # dict[name]: (B, L, V_field)
 
 # -------------------------------------------------------------------------------------- #
 #  Classification head                                                             #
