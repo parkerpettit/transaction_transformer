@@ -15,17 +15,20 @@ class FeaturePredictionModel(nn.Module):
     Can be used for next transaction prediction with the auto-regressive transformer, or masked token
     prediction with the masked transformer. Controlled by the is_causal flag in the config.
 
-    Returns: A dictionary of length K = C + F, where each key is a feature name and each value is a (B, L, V_field) tensor.
+    Returns: A dictionary of length K = C + F, where each key is a feature name and each value is a (B, V_field) tensor.
     C is the number of categorical features, F is the number of continuous features.
     
     """
     def __init__(self, config: ModelConfig, schema: FieldSchema):
         super().__init__()
         self.config = config
-        self.is_causal = config.sequence_transformer.is_causal
         self.transaction_embedding_model = TransformerEmbedder(config, schema)
         self.feature_prediction_head = FeaturePredictionHead(config, schema)
+        self.is_causal = config.training.model_type == "ar"
 
-    def forward(self, cat: LongTensor, cont: Tensor, row_type: int = 0, causal: bool = True):
-        embeddings = self.transaction_embedding_model(cat, cont, row_type, causal=causal)
-        return self.feature_prediction_head(embeddings) # (B, L, M) -> dict[name]: (B, L, V_field)
+    def forward(self, cat: LongTensor, cont: Tensor, row_type: int = 0):
+        embeddings = self.transaction_embedding_model(cat, cont, row_type) # (B, L, M)
+        if self.is_causal:
+            return self.feature_prediction_head(embeddings[:, -1, :]) # (B, M) -> dict[name]: (B, V_field)
+        else:
+            return self.feature_prediction_head(embeddings) # (B, L, M) -> dict[name]: (B, L, V_field) 

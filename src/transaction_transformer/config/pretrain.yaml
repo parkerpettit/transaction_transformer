@@ -1,31 +1,30 @@
 model:
-  model_type: "feature_prediction"
+  mode: "pretrain"
   row_types: 1
   freeze_embedding: false
   emb_dropout: 0.1
   clf_dropout: 0.1
-  checkpoint_dir: "data/models"
+  pretrain_checkpoint_dir: "data/models/pretrained"
+  finetune_checkpoint_dir: "data/models/finetuned"
   log_dir: "logs"
   
   field_transformer:
     d_model: 72
     n_heads: 8
-    depth: 2
+    depth: 1
     ffn_mult: 4
     dropout: 0.1
     layer_norm_eps: 1.0e-6
     norm_first: true
-    is_causal: false
   
   sequence_transformer:
-    d_model: 512
-    n_heads: 8
-    depth: 6
+    d_model: 1080
+    n_heads: 12
+    depth: 12
     ffn_mult: 4
     dropout: 0.1
     layer_norm_eps: 1.0e-6
     norm_first: true
-    is_causal: true
   
   embedding:
     emb_dim: 72
@@ -35,10 +34,10 @@ model:
     mask_token_init_std: 0.02
   
   training:
-    total_epochs: 10
-    batch_size: 32
+    total_epochs: 5
+    batch_size: 128
     learning_rate: 1.0e-4
-    mode: "ar"  # "mlm" or "ar"
+    model_type: "mlm"  # "mlm" or "ar"
     p_field: 0.15
     p_row: 0.10
     joint_timestamp_masking: true
@@ -47,11 +46,10 @@ model:
     mixed_precision: false
     early_stopping_patience: 5
     device: "cuda"
-    num_workers: 4
+    num_workers: 0
   
   data:
-    data_dir: "data"
-    preprocessed_path: "src/transaction_transformer/data/preprocessing/legit_processed.pt"
+    preprocessed_path: "data/processed/legit_processed.pt"
     window: 10
     stride: 5
     num_bins: 100

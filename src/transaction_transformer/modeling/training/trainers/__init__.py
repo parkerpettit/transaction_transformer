@@ -4,10 +4,8 @@ Trainers module for transaction transformer.
 Contains trainer implementations for different training modes.
 """
 
-from .autoregressive_trainer import AutoregressiveTrainer
-# from .mlm_trainer import MLMTrainer
+from .pretrainer import Pretrainer
 
 __all__ = [
-    "AutoregressiveTrainer",
-    # "MLMTrainer",
+    "Pretrainer",
 ] 

@@ -19,7 +19,6 @@ class TransformerConfig:
     dropout: float = 0.1
     layer_norm_eps: float = 1e-6
     norm_first: bool = True
-    is_causal: bool = True  # Only used for sequence transformer
 
 
 @dataclass
@@ -35,9 +34,9 @@ class EmbeddingConfig:
 class ClassificationConfig:
     """Configuration for classification head."""
     hidden_dim: int = 512
-    depth: int = 2  # Number of layers in the MLP. 0 is a linear layer
+    depth: int = 0  # Number of layers in the MLP. 0 is a linear layer
     dropout: float = 0.1
-    output_dim: int = 2
+    output_dim: int = 1
 
 
 @dataclass
@@ -48,8 +47,8 @@ class TrainingConfig:
     batch_size: int = 32
     learning_rate: float = 1.0e-4
     
-    # Training mode
-    mode: str = "ar"  # "mlm" or "ar"
+    # Training model_type
+    model_type: str = "mlm"  # "mlm" or "ar"
     
     # MLM-specific parameters
     p_field: float = 0.15  # Field masking probability
@@ -66,15 +65,17 @@ class TrainingConfig:
     
     # Device and workers
     device: str = "cuda"  # "auto", "cpu", "cuda"
-    num_workers: int = 4
+    num_workers: int = 0
+    
+    # Class imbalance handling
+    positive_weight: float = 1.0  # Weight for positive class in binary classification
 
 
 @dataclass
 class DataConfig:
     """Configuration for data loading and preprocessing."""
     # Data paths
-    data_dir: str = "data"
-    preprocessed_path: str = "data/preprocessing/legit_processed.pt"
+    preprocessed_path: str = "data/preprocessed/legit_processed.pt"
     
     # Sequence parameters
     window: int = 10
@@ -98,7 +99,7 @@ class DataConfig:
 class ModelConfig:
     """Main model configuration."""
     # Model architecture
-    model_type: str = "feature_prediction"  # "feature_prediction", "fraud_detection"
+    mode: str = "pretrain"  # "pretrain", "finetune"
     
     # Transformer configurations
     field_transformer: TransformerConfig = field(default_factory=TransformerConfig)
@@ -118,15 +119,16 @@ class ModelConfig:
     freeze_embedding: bool = False
     emb_dropout: float = 0.1
     clf_dropout: float = 0.1
-    
+
     # Training configuration
     training: TrainingConfig = field(default_factory=TrainingConfig)
     
     # Data configuration
     data: DataConfig = field(default_factory=DataConfig)
-    
+
     # Paths
-    checkpoint_dir: str = "data/models"
+    pretrain_checkpoint_dir: str = "data/models/pretrained"
+    finetune_checkpoint_dir: str = "data/models/finetuned"
     log_dir: str = "logs"
 
 
@@ -154,9 +156,6 @@ class Config:
     model: ModelConfig = field(default_factory=ModelConfig)
     metrics: MetricsConfig = field(default_factory=MetricsConfig)
     
-    def __post_init__(self):
-        """Validate configuration after initialization."""
-        self._validate_config()
     
     def _validate_config(self):
         """Validate configuration parameters."""
@@ -167,9 +166,9 @@ class Config:
                 f"must match embedding emb_dim ({self.model.embedding.emb_dim})"
             )
         
-        # Validate training mode
-        if self.model.training.mode not in ["mlm", "ar"]:
-            raise ValueError(f"Training mode must be 'mlm' or 'ar', got {self.model.training.mode}")
+        # Validate training model_type
+        if self.model.training.model_type not in ["mlm", "ar"]:
+            raise ValueError(f"Training model_type must be 'mlm' or 'ar', got {self.model.training.model_type}")
         
         # Validate masking probabilities
         if not 0 <= self.model.training.p_field <= 1:
@@ -194,37 +193,38 @@ class Config:
     
     @classmethod
     def from_dict(cls, config_dict: Dict[str, Any]) -> 'Config':
-        """Create config from dictionary."""
-        # Handle nested configs
-        if 'model' in config_dict:
-            model_dict = config_dict['model']
-            if 'field_transformer' in model_dict:
-                model_dict['field_transformer'] = TransformerConfig(**model_dict['field_transformer'])
-            if 'sequence_transformer' in model_dict:
-                model_dict['sequence_transformer'] = TransformerConfig(**model_dict['sequence_transformer'])
-            if 'embedding' in model_dict:
-                model_dict['embedding'] = EmbeddingConfig(**model_dict['embedding'])
-            if 'training' in model_dict:
-                model_dict['training'] = TrainingConfig(**model_dict['training'])
-            if 'data' in model_dict:
-                model_dict['data'] = DataConfig(**model_dict['data'])
-            if 'classification' in model_dict:
-                model_dict['classification'] = ClassificationConfig(**model_dict['classification'])
-            
-            config_dict['model'] = ModelConfig(**model_dict)
-        
-        if 'metrics' in config_dict:
-            config_dict['metrics'] = MetricsConfig(**config_dict['metrics'])
-        
-        return cls(**config_dict)
+        """Create Config from (possibly nested) dictionary by overriding the default dataclass values.
+        This performs a recursive update so missing keys keep their default values, while specified
+        keys in the YAML/CLI dict overwrite the defaults.
+        """
+        import dataclasses
+
+        def _update_dataclass(dc_obj: Any, updates: Dict[str, Any]):
+            """Recursively update a dataclass instance from a dict of updates."""
+            for key, value in updates.items():
+                if not hasattr(dc_obj, key):
+                    continue  # ignore unknown keys to stay robust
+                current_val = getattr(dc_obj, key)
+                if dataclasses.is_dataclass(current_val) and isinstance(value, dict):
+                    _update_dataclass(current_val, value)
+                else:
+                    setattr(dc_obj, key, value)
+
+        # 1) Start from defaults
+        cfg = cls()
+        # 2) Recursively apply overrides
+        _update_dataclass(cfg, config_dict)
+        # 3) Validate and return
+        cfg._validate_config()
+        return cfg
 
 
 class ConfigManager:
     """Manages configuration loading, merging, and validation."""
     
-    def __init__(self, config_path: Optional[str] = None):
+    def __init__(self, config_path: str):
         self.config_path = config_path
-        self.config: Optional[Config] = None
+        self.config = self.load_config(self.config_path)
     
     def load_yaml(self, path: str) -> Dict[str, Any]:
         """Load YAML configuration file."""
@@ -236,13 +236,11 @@ class ConfigManager:
         parser = argparse.ArgumentParser(description="Transaction Transformer Training")
         
         # Configuration file
-        parser.add_argument("--config", type=str, default="pretrain.yaml",
-                          help="Path to configuration file")
+        parser.add_argument("--config", type=str, help="Path to configuration file")
         
         # Model parameters
-        parser.add_argument("--model-type", type=str, help="Type of model to train")
         parser.add_argument("--training-mode", type=str, choices=["mlm", "ar"], 
-                          help="Pretraining mode (MLM or autoregressive)")
+                          help="Pretraining model_type (MLM or autoregressive)")
         
         # Training parameters
         parser.add_argument("--batch-size", type=int, help="Batch size")
@@ -286,8 +284,8 @@ class ConfigManager:
         
         # Map CLI args to config structure
         cli_mapping = {
-            'model_type': 'model.model_type',
-            'training_mode': 'model.training.mode',
+            'mode': 'model.mode',
+            'training_mode': 'model.training.model_type',
             'batch_size': 'model.training.batch_size',
             'learning_rate': 'model.training.learning_rate',
             'total_epochs': 'model.training.total_epochs',
@@ -298,16 +296,17 @@ class ConfigManager:
             'seq_d_model': 'model.sequence_transformer.d_model',
             'seq_n_heads': 'model.sequence_transformer.n_heads',
             'seq_depth': 'model.sequence_transformer.depth',
-            'data_dir': 'model.data.data_dir',
             'window': 'model.data.window',
             'stride': 'model.data.stride',
             'num_bins': 'model.data.num_bins',
             'p_field': 'model.training.p_field',
             'p_row': 'model.training.p_row',
-            'checkpoint_dir': 'model.checkpoint_dir',
+            'pretrain_checkpoint_dir': 'model.pretrain_checkpoint_dir',
+            'finetune_checkpoint_dir': 'model.finetune_checkpoint_dir',
             'log_dir': 'model.log_dir',
             'run_name': 'metrics.run_name',
-            'seed': 'metrics.seed'
+            'seed': 'metrics.seed',
+
         }
         
         for cli_key, config_path in cli_mapping.items():
@@ -323,10 +322,9 @@ class ConfigManager:
         
         return merged
     
-    def load_config(self, config_path: Optional[str] = None) -> Config:
+    def load_config(self, config_path: str) -> Config:
         """Load and merge configuration from file and CLI."""
-        if config_path is None:
-            config_path = self.config_path or "pretrain.yaml"
+        
         
         # Parse CLI arguments
         cli_args = self.parse_cli_args()
@@ -334,10 +332,7 @@ class ConfigManager:
         # Override config path from CLI if provided
         if cli_args.config:
             config_path = cli_args.config
-        
-        # Ensure config_path is not None
-        if config_path is None:
-            config_path = "pretrain.yaml"
+
         
         # Resolve path relative to config directory
         config_dir = Path(__file__).parent
@@ -354,11 +349,6 @@ class ConfigManager:
         
         return self.config
     
-    def get_config(self) -> Config:
-        """Get the current configuration."""
-        if self.config is None:
-            return self.load_config()
-        return self.config
     
     def _config_to_dict(self, config: Config) -> Dict[str, Any]:
         """Convert config to dictionary for wandb logging."""

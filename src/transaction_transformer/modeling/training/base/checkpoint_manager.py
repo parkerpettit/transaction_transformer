@@ -15,7 +15,6 @@ class CheckpointManager:
 
     def __init__(self, checkpoint_dir: str):
         self.checkpoint_dir = Path(checkpoint_dir)
-        self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
     def save_checkpoint(
         self,
@@ -25,6 +24,7 @@ class CheckpointManager:
         epoch: int,
         schema: FieldSchema,
         config: ModelConfig,
+        wandb_run: Optional[Any] = None,
         name: str = "checkpoint.pt"
     ) -> None:
         """Save a training checkpoint using state_dicts."""
@@ -36,23 +36,31 @@ class CheckpointManager:
             "schema": schema,
             "config": config,
         }
+        
+        print(f"Saving checkpoint to {self.checkpoint_dir / name}")
         torch.save(checkpoint, self.checkpoint_dir / name)
+        print(f"Checkpoint saved to {self.checkpoint_dir / name}")
+        if wandb_run:
+            print(f"Uploading checkpoint to wandb")
+            wandb_run.log_artifact(self.checkpoint_dir / name, type="model")
+            print(f"Checkpoint uploaded to wandb")
 
     def load_checkpoint(
         self,
         checkpoint_path: str,
         model: torch.nn.Module,
-        optimizer: torch.optim.Optimizer,   
+        optimizer: Optional[torch.optim.Optimizer] = None,   
         scheduler: Optional[torch.optim.lr_scheduler._LRScheduler] = None,
         map_location: Optional[str] = None,
-    ) -> Tuple[torch.nn.Module, torch.optim.Optimizer, Optional[torch.optim.lr_scheduler._LRScheduler], int]:
+    ) -> Tuple[torch.nn.Module, Optional[torch.optim.Optimizer], Optional[torch.optim.lr_scheduler._LRScheduler], int]:
         """
         Load a training checkpoint. Loads state_dicts into the provided model, optimizer, and scheduler.
         Returns model, optimizer, scheduler, and current epoch.
         """
-        checkpoint = torch.load(checkpoint_path, map_location=map_location)
+        checkpoint = torch.load(checkpoint_path, map_location=map_location, weights_only=False)
         model.load_state_dict(checkpoint["model_state_dict"])
-        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        if optimizer is not None:
+            optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
         if scheduler is not None and checkpoint.get("scheduler_state_dict") is not None:
             scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
         epoch = checkpoint["epoch"]

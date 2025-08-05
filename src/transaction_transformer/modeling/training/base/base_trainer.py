@@ -3,14 +3,14 @@ Abstract base trainer class for transaction transformer.
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from .checkpoint_manager import CheckpointManager
 from .metrics import MetricsTracker
 from transaction_transformer.data.preprocessing import FieldSchema
-from transaction_transformer.config.config import ModelConfig
+from transaction_transformer.config.config import Config
 import wandb
 from tqdm import tqdm
 
@@ -21,7 +21,7 @@ class BaseTrainer(ABC):
         self,
         model: nn.Module,
         schema: FieldSchema,
-        config: ModelConfig,
+        config: Config,
         device: torch.device,
         train_loader: DataLoader,
         val_loader: DataLoader,
@@ -37,62 +37,95 @@ class BaseTrainer(ABC):
         self.schema = schema
         self.config = config
         # Initialize components
-        self.checkpoint_manager = CheckpointManager(self.config.checkpoint_dir) 
-        self.metrics = MetricsTracker()
-        
+        if self.config.model.mode == "pretrain":
+            self.checkpoint_manager = CheckpointManager(self.config.model.pretrain_checkpoint_dir) 
+
+        else:
+            self.checkpoint_manager = CheckpointManager(self.config.model.finetune_checkpoint_dir) 
+        self.metrics = MetricsTracker(ignore_index=self.config.model.data.ignore_idx)
+        self.metrics.wandb_run = wandb.init(project=config.metrics.wandb_project, name=config.metrics.run_name, config=config.to_dict(), tags=[config.model.training.model_type])
+        self.metrics.class_names = self.schema.cat_features + self.schema.cont_features if config.model.mode == "pretrain" else ["fraud", "nonfraud"]
+        self.patience = config.model.training.early_stopping_patience
         # Training state
         self.current_epoch = 0
         self.current_step = 0
         self.best_val_loss = float('inf')
-        self.bar_fmt = "{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]"
-        self.train_bar = tqdm(train_loader, desc="Training", bar_format=self.bar_fmt, leave=True)
-        self.val_bar = tqdm(val_loader, desc="Validation", bar_format=self.bar_fmt, leave=True)
+        self.bar_fmt = (
+        "{l_bar}{bar:10}| "         # visual bar
+        "{n_fmt}/{total_fmt} batches "  # absolute progress
+        "({percentage:3.0f}%) | "   # %
+        "elapsed: {elapsed} | ETA: {remaining} | "  # timing
+        "{rate_fmt} | "             # batches / sec
+        "{postfix}"                 # losses go here
+    )
 
+    @abstractmethod
+    def forward_pass(self, batch: Dict[str, torch.Tensor]) -> Tuple[Dict[str, torch.Tensor], torch.Tensor, torch.Tensor]:
+        """Forward pass for a batch."""
+        pass
 
-    
     @abstractmethod
     def train_epoch(self) -> Dict[str, float]:
         """Train for one epoch."""
         pass
-    
+
     @abstractmethod
     def validate_epoch(self) -> Dict[str, float]:
         """Validate for one epoch."""
         pass
     
     @abstractmethod
-    def compute_loss(self, batch: tuple, outputs: Any) -> torch.Tensor:
+    def compute_loss(self, logits: Dict[str, torch.Tensor], labels_cat: torch.Tensor, labels_cont: torch.Tensor) -> torch.Tensor:
         """Compute loss for a batch."""
         pass
     
     def train(self, num_epochs: int) -> None:
         """Main training loop."""
+        patience_counter = 0
         for epoch in range(num_epochs):
             self.current_epoch = epoch
-            self.train_bar.reset()
-            self.val_bar.reset()
+
             # Train for one epoch
+            self.metrics.start_epoch()
+            self.train_bar = tqdm(self.train_loader, desc=f"Training Epoch {epoch+1}", bar_format=self.bar_fmt, leave=True)
             train_metrics = self.train_epoch()
-            
+            self.metrics.end_epoch(epoch, "train")
+
             # Validate for one epoch
+            self.metrics.start_epoch()
+            self.val_bar = tqdm(self.val_loader, desc=f"Validation Epoch {epoch+1}", bar_format=self.bar_fmt, leave=True)
             val_metrics = self.validate_epoch()
-            
-            # Log metrics
-            metrics = {**train_metrics, **val_metrics}
-            self.metrics.log_metrics(metrics)
+            self.metrics.end_epoch(epoch, "val")
             
             # Save checkpoint if validation loss improves
-            if val_metrics.get("val_loss", float('inf')) < self.best_val_loss:
-                self.best_val_loss = val_metrics["val_loss"]
-                self.save_checkpoint(epoch, "best_model.pt")
-            
+            if val_metrics.get("loss", float('inf')) < self.best_val_loss:
+                print(f"New best validation loss: {val_metrics.get('loss', 0):.4f}")
+                self.best_val_loss = val_metrics["loss"]
+                self.checkpoint_manager.save_checkpoint(
+                    self.model,
+                    self.optimizer,
+                    self.scheduler,
+                    epoch,
+                    self.schema, 
+                    self.config.model, 
+                    wandb_run=self.metrics.wandb_run,
+                    name=f"{self.config.model.training.model_type}_{self.config.model.mode}_best_model.pt"
+                )
+                patience_counter = 0
+            else:
+                patience_counter += 1
+                if patience_counter >= self.patience:
+                    print(f"Early stopping triggered after {epoch} epochs.")
+                    break
             
             # Print progress
             print(f"Epoch {epoch+1}/{num_epochs}")
             print(f"Train Loss: {train_metrics.get('loss', 0):.4f}")
-            print(f"Val Loss: {val_metrics.get('val_loss', 0):.4f}")
+            print(f"Val Loss: {val_metrics.get('loss', 0):.4f}")
             print("-" * 50)
-    
+            
+            
+
 
     def label_smoothing(self, targets: torch.Tensor, num_classes: int, epsilon: float = 0.1) -> torch.Tensor:
         """
@@ -147,28 +180,3 @@ class BaseTrainer(ABC):
             smoothed[rows, cols] = epsilon / (2 * neighborhood)
         return smoothed
     
-
-    def save_checkpoint(self, epoch: int, name: str = "checkpoint.pt") -> None:
-        """Save training checkpoint."""
-        self.checkpoint_manager.save_checkpoint(
-            self.model,
-            self.optimizer,
-            self.scheduler,
-            epoch,
-            self.schema, 
-            self.config, 
-            name=name
-        )
-    
-    def load_checkpoint(self, checkpoint_path: str) -> None:
-        """Load training checkpoint."""
-        self.model, self.optimizer, self.scheduler, self.current_epoch = self.checkpoint_manager.load_checkpoint(
-            checkpoint_path,
-            self.model,
-            self.optimizer,
-            self.scheduler
-        )
-    
-    def log_metrics(self, metrics: Dict[str, float]) -> None:
-        """Log training metrics."""
-        self.metrics.log_metrics(metrics)

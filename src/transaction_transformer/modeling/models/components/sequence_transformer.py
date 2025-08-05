@@ -35,7 +35,7 @@ class SinCosPositionalEncoding(nn.Module):
 
 class SequenceTransformer(nn.Module):
     """Transformer encoder over time with optional causal (AR) masking."""
-    def __init__(self, config):
+    def __init__(self, config, causal: bool):
         super().__init__()
         self.pos_enc = SinCosPositionalEncoding(config.d_model)
 
@@ -52,9 +52,8 @@ class SequenceTransformer(nn.Module):
         self.encoder = nn.TransformerEncoder(layer, num_layers=config.depth)
 
         # Auto-expanding causal mask cache
-        if config.is_causal:
-            self.is_causal = True
-            self.register_buffer("causal_mask", torch.empty(0, 0, dtype=torch.bool), persistent=False)
+        self.is_causal = causal
+        self.register_buffer("causal_mask", torch.empty(0, 0, dtype=torch.bool), persistent=False)
 
     @torch.no_grad()
     def _get_causal_mask(self, L: int, device, dtype=torch.bool) -> Tensor:
@@ -69,7 +68,6 @@ class SequenceTransformer(nn.Module):
         self,
         x: Tensor,                               # (B, L, M)
         *,
-        causal: bool = True,                    # Whether to use causal masking
         key_padding_mask: Tensor | None = None  # (B, L) bool: True = pad to ignore
     ) -> Tensor:
         """
@@ -85,7 +83,7 @@ class SequenceTransformer(nn.Module):
 
         # Use causal mask if requested and available
         attn_mask = None
-        if causal and hasattr(self, 'is_causal') and self.is_causal:
+        if self.is_causal:
             attn_mask = self._get_causal_mask(L, x.device)
         
         # nn.TransformerEncoder expects:

@@ -34,8 +34,7 @@ class MLMTabCollator(BaseTabCollator):
         # Each item: {"cat": (L,C) long, "cont": (L,F) float, "label": ... optional}
         cats  = torch.stack([b["cat"]  for b in batch], 0)  # (B,L,C)
         conts = torch.stack([b["cont"] for b in batch], 0)  # (B,L,F)
-        labels = torch.stack([b.get("label", torch.tensor(0)) for b in batch], 0)  # passthrough
-
+        labels = torch.stack([b["label"] for b in batch], 0) # (B,L)
         B, L, C = cats.shape
         _, _, F = conts.shape
         device = cats.device
@@ -85,8 +84,8 @@ class MLMTabCollator(BaseTabCollator):
         return {
             "cat": cats_in,                 # (B,L,C) long
             "cont": cont_in,                # (B,L,F) float (NaN where masked)
-            "labels_cat": labels_cat,       # (B,L,C) long; ignore_index elsewhere
-            "labels_cont": labels_cont,     # (B,L,F) long; ignore_index elsewhere
+            "labels_cat": labels_cat,       # (B,L,C) long; ignore_index where not masked 
+            "labels_cont": labels_cont,     # (B,L,F) long; ignore_index where not masked
             "downstream_label": labels,     # passthrough if you need it
         }
 
@@ -107,7 +106,7 @@ class ARTabCollator(BaseTabCollator):
         # Each item: {"cat": (L,C) long, "cont": (L,F) float, "label": ... optional}
         cats  = torch.stack([b["cat"]  for b in batch], 0)  # (B,L,C)
         conts = torch.stack([b["cont"] for b in batch], 0)  # (B,L,F)
-        labels = torch.stack([b["label"] for b in batch], 0)  # passthrough
+        labels = torch.stack([b["label"] for b in batch], 0)  # (B,L)
 
         # For AR training: use first L-1 transactions as input, predict transaction L
         cats_in = cats[:, :-1, :]  # (B, L-1, C) - input sequence
@@ -128,7 +127,7 @@ class ARTabCollator(BaseTabCollator):
             "cont": cont_in,                # (B,L-1,F) float - input sequence
             "labels_cat": labels_cat,       # (B,C) long - target transaction
             "labels_cont": labels_cont,     # (B,F) long - target transaction (binned values)
-            "downstream_label": labels,     # passthrough if you need it
+            "downstream_label": labels,     # (B,L) - passthrough if you need it
         }
 
 
@@ -139,3 +138,19 @@ def collate_fn_autoregressive(batch: List[Dict[str, torch.Tensor]]) -> Dict[str,
     conts = torch.stack([(b["cont"]) for b in batch], dim=0)
     labels = torch.stack([b["label"] for b in batch], dim=0)
     return {"cat": cats, "cont": conts, "label": labels}
+
+
+class FinetuneCollator(BaseTabCollator):
+    """Simple collator for finetuning - no masking."""
+    
+    @torch.no_grad()
+    def __call__(self, batch: list[dict[str, torch.Tensor]]) -> dict[str, torch.Tensor]:
+        cats = torch.stack([b["cat"] for b in batch], 0)  # (B, L, C)
+        conts = torch.stack([b["cont"] for b in batch], 0)  # (B, L, F)
+        labels = torch.stack([b["label"] for b in batch], 0)  # (B,)
+        
+        return {
+            "cat": cats,                    # (B, L, C)
+            "cont": conts,                  # (B, L, F)
+            "downstream_label": labels,     # (B,) - fraud labels
+        }

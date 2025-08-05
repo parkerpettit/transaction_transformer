@@ -1,32 +1,37 @@
 model:
-  model_type: "fraud_detection"
+  mode: "finetune"
   row_types: 1
   freeze_embedding: false
   emb_dropout: 0.1
   clf_dropout: 0.1
-  checkpoint_dir: "data/models"
+  pretrain_checkpoint_dir: "data/models/pretrained"
+  finetune_checkpoint_dir: "data/models/finetuned"
   log_dir: "logs"
   
   field_transformer:
     d_model: 72
     n_heads: 8
-    depth: 2
+    depth: 1
     ffn_mult: 4
     dropout: 0.1
-    layer_norm_eps: 1e-6
+    layer_norm_eps: 1.0e-6
     norm_first: true
-    is_causal: false
   
   sequence_transformer:
-    d_model: 256
-    n_heads: 8
-    depth: 6
+    d_model: 1080
+    n_heads: 12
+    depth: 12
     ffn_mult: 4
     dropout: 0.1
-    layer_norm_eps: 1e-6
+    layer_norm_eps: 1.0e-6
     norm_first: true
-    is_causal: false  # Bidirectional for fraud detection
   
+  classification:
+    hidden_dim: 512
+    depth: 2  # Number of layers in the MLP. 0 is a linear layer
+    dropout: 0.1
+    output_dim: 1
+
   embedding:
     emb_dim: 72
     dropout: 0.1
@@ -35,48 +40,45 @@ model:
     mask_token_init_std: 0.02
   
   training:
-    total_epochs: 5
-    batch_size: 32
-    learning_rate: 5e-5  # Lower learning rate for finetuning
-    weight_decay: 0.01
-    warmup_steps: 100
-    max_grad_norm: 1.0
-    mode: "ar"  # Not used in finetuning but required
+    total_epochs: 100
+    batch_size: 64 
+    learning_rate: 1.0e-4
+    model_type: "mlm"  # "mlm" or "ar"
     p_field: 0.15
     p_row: 0.10
     joint_timestamp_masking: true
     optimizer: "adamw"
     scheduler: "cosine"
     mixed_precision: false
-    gradient_accumulation_steps: 1
-    save_steps: 500
-    eval_steps: 100
-    logging_steps: 50
-    save_best_only: true
-    early_stopping_patience: 3
-    device: "auto"
-    num_workers: 4
+    early_stopping_patience: 5
+    device: "cuda"
+    num_workers: 0
+    positive_weight: 9.08  # Weight for positive (fraud) class. if 1.0, calculate from data
+    #   Label statistics from full_processed.pt with include_all_fraud: true
+    #   Positive samples: 20677
+    #   Negative samples: 1704227
+    #   Positive ratio: 0.0120
+    #   Recommended weights:
+    #   Inverse frequency: 82.42
+    #   Sqrt inverse frequency: 9.08
+    # Recommended: Calculate as negative_samples / positive_samples from your dataset
+    # Or use sqrt(negative_samples / positive_samples) for less aggressive weighting
   
   data:
-    data_dir: "data"
-    preprocessed_path: "src/transaction_transformer/data/preprocessing/legit_processed.pt"
+    preprocessed_path: "data/processed/full_processed.pt"
     window: 10
-    stride: 5
+    stride: 10
     num_bins: 100
     group_by: "User"
-    include_all_fraud: true  # Include fraud labels for finetuning
+    include_all_fraud: true
     padding_idx: 0
     mask_idx: 1
     unk_idx: 2
 
 metrics:
-  experiment_name: "feature_prediction_finetune"
-  run_name: null
-  tensorboard: true
-  wandb: false
-  wandb_project: null
-  wandb_entity: null
-  wandb_group: null
+  run_name: finetune
+  wandb: true
+  wandb_project: "fraud-detection"
   seed: 42
   deterministic: false
   log_gradients: false

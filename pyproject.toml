@@ -35,4 +35,6 @@ dev = [
     "mypy"
 ]
 
-dynamic = ["classifiers"]
+[project.scripts]
+pretrain = "transaction_transformer.modeling.training.pretrain:main"
+finetune = "transaction_transformer.modeling.training.finetune:main"

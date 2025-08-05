@@ -114,10 +114,10 @@ class TxnDataset(Dataset):
 #     torch.save({"N": N, "M": M}, cache_dir / "meta.pt")
 
 #     # 2) open memmaps
-#     pred_mm = np.memmap(cache_dir / "pred.dat",   dtype="float32", mode="w+", shape=(N, M)) # type: ignore
-#     act_mm  = np.memmap(cache_dir / "actual.dat", dtype="float32", mode="w+", shape=(N, M))# type: ignore
-#     delta_mm= np.memmap(cache_dir / "delta.dat",  dtype="float32", mode="w+", shape=(N, M))# type: ignore
-#     lbl_mm  = np.memmap(cache_dir / "label.dat",  dtype="float32", mode="w+", shape=(N,))
+#     pred_mm = np.memmap(cache_dir / "pred.dat",   dtype="float32", model_type="w+", shape=(N, M)) # type: ignore
+#     act_mm  = np.memmap(cache_dir / "actual.dat", dtype="float32", model_type="w+", shape=(N, M))# type: ignore
+#     delta_mm= np.memmap(cache_dir / "delta.dat",  dtype="float32", model_type="w+", shape=(N, M))# type: ignore
+#     lbl_mm  = np.memmap(cache_dir / "label.dat",  dtype="float32", model_type="w+", shape=(N,))
 
 #     loader = DataLoader(ds, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
 #     pretrained_model.to(device).eval()
@@ -128,9 +128,9 @@ class TxnDataset(Dataset):
 #         cat, cont, label = (t.to(device) for t in (batch["cat"], batch["cont"], batch["label"]))
 
 #         # predicted embedding from history only
-#         h_pred = pretrained_model(cat[:, :-1], cont[:, :-1], mode="extract").cpu().numpy()
+#         h_pred = pretrained_model(cat[:, :-1], cont[:, :-1], model_type="extract").cpu().numpy()
 #         # actual embedding of full window
-#         h_act  = pretrained_model(cat, cont, mode="extract").cpu().numpy()
+#         h_act  = pretrained_model(cat, cont, model_type="extract").cpu().numpy()
 
 #         pred_mm [idx:idx+B] = h_pred
 #         act_mm  [idx:idx+B] = h_act
@@ -184,13 +184,13 @@ class TxnDataset(Dataset):
 #         # On first access in each worker, open the memmaps
 #         if self.predals is None:
 #             self.predals = np.memmap(self._pred_file,   dtype="float32",
-#                                     mode="r+", shape=(self.N, self.M))
+#                                     model_type="r+", shape=(self.N, self.M))
 #             self.actual  = np.memmap(self._actual_file, dtype="float32",
-#                                     mode="r+", shape=(self.N, self.M))
+#                                     model_type="r+", shape=(self.N, self.M))
 #             self.delta   = np.memmap(self._delta_file,  dtype="float32",
-#                                     mode="r+", shape=(self.N, self.M))
+#                                     model_type="r+", shape=(self.N, self.M))
 #             self.labels  = np.memmap(self._label_file,  dtype="float32",
-#                                     mode="r+", shape=(self.N,))
+#                                     model_type="r+", shape=(self.N,))
 
 #         # Now indexing is just a cheap page‑in by the OS
 #         pred = torch.from_numpy(self.predals[i])

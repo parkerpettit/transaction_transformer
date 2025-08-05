@@ -11,12 +11,11 @@ from transaction_transformer.data.preprocessing.tokenizer import FieldSchema
 # -------------------------------------------------------------------------------------- #
 class FeaturePredictionHead(nn.Module):
     """
-    Attribute-specific heads. Takes (B, L, M) embeddings and returns logits per field: dict[field_name] -> (B, L, V_f).
+    Attribute-specific heads. Takes (B, M) embeddings and returns logits per field: dict[field_name] -> (B, V_f).
     """
     def __init__(self, config: ModelConfig, schema: FieldSchema):
         super().__init__()
         self.row_expander = RowExpander(config, schema)
-        m = config.sequence_transformer.d_model
         cat_names = schema.cat_features
         cont_names = schema.cont_features
         all_names = cat_names + cont_names
@@ -43,19 +42,23 @@ class FeaturePredictionHead(nn.Module):
             )
         self.heads = heads
         self.all_names = all_names
+        self.is_causal = config.training.model_type == "ar"
 
     def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
         """
-        x: (B, L, M) input from the sequence transformer
-        returns: dict[name] -> (B, L, V_field) which are the logits for each feature at each time step, 
-                where V_field is the vocabulary size for that feature. Dict is of length K = C + F.
-                First C features are categorical, last F features are continuous.
+        x: (B, L, M) input from the sequence transformer if mlm, (B, M) if ar
+        returns: dict[name] -> (B, L, V_field) which are the logits for each feature if mlm,
+                (B, V_field) if ar, where V_field is the vocabulary size for that feature.
+                Dict is of length K = C + F. L is the number of rows in the sequence.
        """
         logits: dict[str, torch.Tensor] = {}
-        z_row = self.row_expander(x) # (B, L, M) -> (B, L, K, D_field)
+        z_row = self.row_expander(x) # (B, L, M) -> (B, L, K, D_field) if mlm, (B, K, D_field) if ar
         for k, name in enumerate(self.all_names):
-            logits[name] = self.heads[name](z_row[:, :, k, :]) # (B, L, D_field) -> (B, L, V_field)
-        return logits # dict[name]: (B, L, V_field)
+            if self.is_causal: # ar model_type
+                logits[name] = self.heads[name](z_row[:, k, :]) # (B, K, D_field) -> (B, V_field)
+            else: # mlm model_type
+                logits[name] = self.heads[name](z_row[:, :, k, :]) # (B, L, K, D_field) -> (B, L, V_field)
+        return logits # dict[name]: (B, L, V_field) if mlm, (B, V_field) if ar
 
 # -------------------------------------------------------------------------------------- #
 #  Classification head                                                             #

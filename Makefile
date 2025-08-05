@@ -6,7 +6,7 @@ help: ## Show this help message
 	@echo 'Targets:'
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-15s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-install: ## Install the package in development mode
+install: ## Install the package in development model_type
 	pip install -e .
 
 test: ## Run tests

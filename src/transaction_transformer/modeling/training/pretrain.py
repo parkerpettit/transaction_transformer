@@ -4,6 +4,7 @@ Pretraining script for feature prediction transformer.
 Supports both MLM and AR pretraining modes.
 """
 
+from pandas.core.arrays.masked import transpose_homogeneous_masked_arrays
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -13,7 +14,7 @@ from pathlib import Path
 from tqdm import tqdm
 from transaction_transformer.data import TxnDataset
 from transaction_transformer.modeling.models import FeaturePredictionModel
-from transaction_transformer.modeling.training.trainers import AutoregressiveTrainer
+from transaction_transformer.modeling.training.trainers.pretrainer import Pretrainer
 
 from transaction_transformer.config.config import Config, ConfigManager
 from transaction_transformer.data.preprocessing.tokenizer import FieldSchema
@@ -41,20 +42,25 @@ def create_datasets(
     
     return dataset
 
-def train_ar(
+def pretrain(
     model: FeaturePredictionModel,
     train_dataset: TxnDataset,
     val_dataset: TxnDataset,
     schema: FieldSchema,
     config: Config,
     device: torch.device,
-    wandb_run: Optional[Any] = None
-) -> AutoregressiveTrainer:
+) -> Pretrainer:
     """Train model using AR pretraining."""
     
     # Create collators
-    train_collator = ARTabCollator(config=config.model, schema=schema)
-    val_collator = ARTabCollator(config=config.model, schema=schema)
+    if config.model.training.model_type == "ar":
+        train_collator = ARTabCollator(config=config.model, schema=schema)
+        val_collator = ARTabCollator(config=config.model, schema=schema)
+    elif config.model.training.model_type == "mlm":
+        train_collator = MLMTabCollator(config=config.model, schema=schema)
+        val_collator = MLMTabCollator(config=config.model, schema=schema)
+    else:
+        raise ValueError(f"Invalid training model_type: {config.model.training.model_type}")
     
     # Create data loaders
     train_loader = DataLoader(
@@ -62,7 +68,9 @@ def train_ar(
         batch_size=config.model.training.batch_size,
         shuffle=True,
         collate_fn=train_collator,
-        num_workers=config.model.training.num_workers
+        num_workers=4,
+        persistent_workers=True,
+        pin_memory=True
     )
     
     val_loader = DataLoader(
@@ -70,7 +78,9 @@ def train_ar(
         batch_size=config.model.training.batch_size,
         shuffle=False,
         collate_fn=val_collator,
-        num_workers=config.model.training.num_workers
+        num_workers=4,
+        persistent_workers=True,
+        pin_memory=True
     )
     
     # Create optimizer and scheduler
@@ -88,31 +98,26 @@ def train_ar(
     
    
     # Create trainer
-    trainer = AutoregressiveTrainer(
+    trainer = Pretrainer(
         model=model,
         schema=schema,
-        config=config.model,
+        config=config,
         device=device,
         train_loader=train_loader,
         val_loader=val_loader,
         optimizer=optimizer,
         scheduler=scheduler,  # type: ignore
-        wandb_run=wandb_run
     )
-    
     return trainer
-
 
 def main():
     """Main pretraining function."""
     
     # Load configuration
     config_manager = ConfigManager(config_path="pretrain.yaml")
-    config = config_manager.load_config()
+    config = config_manager.config
 
     print("Configuration loaded")
-    wandb_run = wandb.init(project=config.metrics.wandb_project, name=config.metrics.run_name, config=config.to_dict(), tags=["ar"])
-
     
     
     # Load preprocessed data
@@ -124,7 +129,20 @@ def main():
     model = FeaturePredictionModel(config=config.model, schema=schema)
     device = torch.device(config.get_device())
     model.to(device)
-    trainer = train_ar(model, train_ds, val_ds, schema, config, device, wandb_run)
+    
+    # Select training model_type based on config
+    trainer = pretrain(model, train_ds, val_ds, schema, config, device)
+    
+    
+    # Check if checkpoint exists and load it
+    checkpoint_path = Path(config.model.pretrain_checkpoint_dir) / f"{config.model.training.model_type}_best_model.pt"
+    if checkpoint_path.exists():
+        print(f"Loading checkpoint from {checkpoint_path}")
+        trainer.checkpoint_manager.load_checkpoint(str(checkpoint_path), trainer.model, trainer.optimizer, trainer.scheduler)
+        print(f"Resuming from epoch {trainer.current_epoch + 1}")
+    else:
+        print("No checkpoint found, starting from scratch")
+    
     print("Starting training...")
     trainer.train(config.model.training.total_epochs)
 

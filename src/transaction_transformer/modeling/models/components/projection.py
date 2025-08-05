@@ -23,23 +23,21 @@ class RowProjector(nn.Module):
     def __init__(self, config: ModelConfig, schema: FieldSchema):
         super().__init__()
         self.row_types = config.row_types
-        self.batch_size = config.training.batch_size
-
         num_fields = len(schema.cat_features) + len(schema.cont_features)
         self.row_projs = nn.ModuleList([nn.Linear(num_fields * config.field_transformer.d_model, config.sequence_transformer.d_model) for _ in range(self.row_types)])
+        self.M = config.sequence_transformer.d_model
 
-    def forward(self, x: Tensor, row_type: int) -> Tensor:
-        B_L, K, D = x.shape
-
+    def forward(self, x: Tensor, row_type: int, B: int, L: int) -> Tensor:
+        """
+        x: (B*L, K, D)
+        row_type: int
+        B: int
+        L: int
+        returns: (B, L, M)
+        """
         field_embs = x.flatten(1)                  # (B*L, K*D) concats all per-field embeddings into one vector per row
-        
         projected = self.row_projs[row_type](field_embs) # (B*L, M)
-        
-        # Use the batch size from the config and infer L from B_L
-        B = self.batch_size  # Use the actual batch size from config
-        L = B_L // B
-        
-        return projected.view(B, L, projected.shape[1])  # (B, L, M)
+        return projected.view(B, L, self.M)  # (B, L, M)
 
 
 # -------------------------------------------------------------------------------------- #
@@ -57,7 +55,7 @@ class RowExpander(nn.Module):
         d_field = config.field_transformer.d_model
         d_row = config.sequence_transformer.d_model
         row_types = config.row_types
-
+        self.is_causal = config.training.model_type == "ar"
         self.K = K
         self.d_field = d_field
 
@@ -69,9 +67,15 @@ class RowExpander(nn.Module):
 
     def forward(self, z_row: torch.Tensor, row_type: int = 0) -> torch.Tensor:
         """
-        z_row: (B, L, M_row)
-        returns: (B, L, K, D_field)
+        z_row: (B, L, M_row) if mlm, (B, M_row) if ar
+        returns: (B, L, K, D_field)  if mlm, (B, K, D_field) if ar
         """
-        B, L, _ = z_row.shape
-        out = self.expand[row_type](z_row)  # (B, L, K*D)
-        return out.view(B, L, self.K, self.d_field) # (B, L, K, D)
+        if self.is_causal: # ar model_type - only need last row
+            B, _ = z_row.shape
+            out = self.expand[row_type](z_row)  # (B, K*D)
+            return out.view(B, self.K, self.d_field) # (B, K, D)
+        else: # mlm model_type - need all L rows
+            B, L, _ = z_row.shape
+            out = self.expand[row_type](z_row)  # (B, L, K*D)
+            return out.view(B, L, self.K, self.d_field) # (B, L, K, D)
+
