@@ -72,7 +72,7 @@ if __name__ == "__main__":
     #                      INITIAL CSV PRE-PROCESSING
     # ---------------------------------------------------------------------
     print("[1] Running initial CSV preprocessing …")
-    full_train_raw, full_val_raw, full_test_raw = preprocess(Path("card_transaction.v1.csv"))
+    full_train_raw, full_val_raw, full_test_raw = preprocess(Path("data/raw/card_transaction.v1.csv"))
 
     # ---------------------------------------------------------------------
     #                       CREATE LEGIT-ONLY SPLITS
@@ -134,12 +134,47 @@ if __name__ == "__main__":
 
     torch.save(
         (full_train_df, full_val_df, full_test_df, schema_full),
-        "full_processed.pt",
+        "data/processed/full_processed.pt",
     )
     torch.save(
         (legit_train_df, legit_val_df, legit_test_df, schema_legit),
-        "legit_processed.pt",
+        "data/processed/legit_processed.pt",
     )
 
     print("Done")
-    #TODO print quantile bin distribution
+    # Print quantile bin distribution for all continuous features in all processed DataFrames
+    import numpy as np
+    import matplotlib.pyplot as plt
+
+    def plot_bin_histograms(df, schema, dataset_name):
+        for feat in schema.cont_features:
+            binner = schema.cont_binners[feat]
+            # Get bin edges and digitized values
+            values = df[feat].values
+            # Remove NaNs for histogram
+            values = values[~pd.isnull(values)]
+            if len(values) == 0:
+                print(f"[{dataset_name}] Feature '{feat}' has no non-NaN values, skipping.")
+                continue
+            # Digitize using bin edges
+            bin_ids = binner.bin(torch.tensor(values))
+            plt.figure(figsize=(6, 3))
+            plt.hist(bin_ids, bins=range(binner.num_bins + 1), edgecolor='black', align='left')
+            plt.title(f"{dataset_name} - {feat} (Quantile Bins)")
+            plt.xlabel("Bin index")
+            plt.ylabel("Count")
+            plt.tight_layout()
+            plt.show()
+            print(f"[{dataset_name}] {feat}: Bin counts: {np.bincount(bin_ids, minlength=binner.num_bins)}")
+
+    print("[7] Plotting quantile bin distributions for all continuous features …")
+    for df, schema, name in [
+        (full_train_df, schema_full, "Full Train"),
+        (full_val_df, schema_full, "Full Val"),
+        (full_test_df, schema_full, "Full Test"),
+        (legit_train_df, schema_legit, "Legit Train"),
+        (legit_val_df, schema_legit, "Legit Val"),
+        (legit_test_df, schema_legit, "Legit Test"),
+    ]:
+        plot_bin_histograms(df, schema, name)
+
