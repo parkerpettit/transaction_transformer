@@ -48,10 +48,17 @@ class NumBinner:
         return self.edges.numel() - 1
 
     def bin(self, x: torch.Tensor) -> torch.Tensor:
-        # returns ints in [0 .. num_bins-1]
-        # Ensure tensor is contiguous to avoid performance warnings
+        """Assign each value in x to a quantile bin.
+        Implements the same semantics as the paper's `np.digitize` + clip.
+        Returns indices in [0, num_bins-1].
+        """
         x_contiguous = x.contiguous()
-        return torch.bucketize(x_contiguous, self.edges, right=True) - 1
+        # torch.bucketize behaves like np.digitize when right=False (default)
+        idx = torch.bucketize(x_contiguous, self.edges, right=False)
+        # idx is in [0, num_edges]; clamp so that values equal to the last edge
+        # get mapped to the last valid bin and negatives stay in the first bin.
+        idx = torch.clamp(idx, 0, self.num_bins - 1)
+        return idx
 
 
 @dataclass
@@ -130,11 +137,16 @@ def normalize(df: pd.DataFrame, scaler: StandardScaler, cont_features: List[str]
 def build_quantile_binner(series: pd.Series, num_bins: int = 100) -> NumBinner:
     """Build a quantile-based binner for numerical features using numpy for memory efficiency."""
 
-    q = np.linspace(0.0, 1.0, num_bins + 1)
-    # Use numpy quantile which is more memory efficient for large datasets
-    edges = np.quantile(series.to_numpy(), q)
-    edges[0] = float('-inf')
-    edges[-1] = float('inf')
+    # Use the paper's approach: create quantiles and remove duplicates
+    qtls = np.arange(0.0, 1.0 + 1 / num_bins, 1 / num_bins)
+    edges = np.quantile(series.to_numpy(), qtls)
+    edges = np.sort(np.unique(edges))
+    
+    # Ensure we have at least 2 edges (min and max)
+    if len(edges) < 2:
+        edges = np.array([series.min(), series.max()])
+    
+    # Convert to torch tensor
     return NumBinner(edges=torch.from_numpy(edges))
 
 

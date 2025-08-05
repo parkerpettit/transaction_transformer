@@ -36,7 +36,7 @@ def build_schema(train_df: pd.DataFrame, *, cat_features: list[str], cont_featur
 
 
 def encode_and_normalize(dfs: list[pd.DataFrame], schema: FieldSchema):
-    """Apply categorical encoding + z-score normalisation to each dataframe."""
+    """Apply categorical encoding + z-score normalization to each dataframe."""
     return [
         normalize(
             encode_df(df.copy(), schema.cat_encoders, schema.cat_features),
@@ -96,7 +96,7 @@ if __name__ == "__main__":
         cont_features=cont_features,
     )
 
-    print("[3] Encoding + normalising FULL dataset …")
+    print("[3] Encoding + normalizing FULL dataset …")
     full_train_df, full_val_df, full_test_df = encode_and_normalize(
         [full_train_raw, full_val_raw, full_test_raw], schema_full
     )
@@ -111,7 +111,7 @@ if __name__ == "__main__":
         cont_features=cont_features,
     )
 
-    print("[5] Encoding + normalising LEGIT dataset …")
+    print("[5] Encoding + normalizing LEGIT dataset …")
     legit_train_df, legit_val_df, legit_test_df = encode_and_normalize(
         [legit_train_raw, legit_val_raw, legit_test_raw], schema_legit # type: ignore
     )
@@ -158,23 +158,23 @@ if __name__ == "__main__":
                 continue
             # Digitize using bin edges
             bin_ids = binner.bin(torch.tensor(values))
-            plt.figure(figsize=(6, 3))
-            plt.hist(bin_ids, bins=range(binner.num_bins + 1), edgecolor='black', align='left')
-            plt.title(f"{dataset_name} - {feat} (Quantile Bins)")
-            plt.xlabel("Bin index")
-            plt.ylabel("Count")
-            plt.tight_layout()
-            plt.show()
+            # plt.figure(figsize=(6, 3))
+            # plt.hist(bin_ids, bins=range(binner.num_bins + 1), edgecolor='black', align='left')
+            # plt.title(f"{dataset_name} - {feat} (Quantile Bins)")
+            # plt.xlabel("Bin index")
+            # plt.ylabel("Count")
+            # plt.tight_layout()
+            # plt.show()
             print(f"[{dataset_name}] {feat}: Bin counts: {np.bincount(bin_ids, minlength=binner.num_bins)}")
 
-    print("[7] Plotting quantile bin distributions for all continuous features …")
-    for df, schema, name in [
-        (full_train_df, schema_full, "Full Train"),
-        (full_val_df, schema_full, "Full Val"),
-        (full_test_df, schema_full, "Full Test"),
-        (legit_train_df, schema_legit, "Legit Train"),
-        (legit_val_df, schema_legit, "Legit Val"),
-        (legit_test_df, schema_legit, "Legit Test"),
-    ]:
-        plot_bin_histograms(df, schema, name)
+    # print("[7] Plotting quantile bin distributions for all continuous features …")
+    # for df, schema, name in [
+    #     (full_train_df, schema_full, "Full Train"),
+    #     (full_val_df, schema_full, "Full Val"),
+    #     (full_test_df, schema_full, "Full Test"),
+    #     (legit_train_df, schema_legit, "Legit Train"),
+    #     (legit_val_df, schema_legit, "Legit Val"),
+    #     (legit_test_df, schema_legit, "Legit Test"),
+    # ]:
+    #     plot_bin_histograms(df, schema, name)
 
