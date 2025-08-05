@@ -193,12 +193,11 @@ cython_debug/
 .cursorignore
 .cursorindexingignoresrc/txn_model/txn_checkpoint.pt
 # Local dataset directories and config overrides
+# Ignore everything inside data/
+data/**
 
-data/raw/*
-data/processed/*
-data/models/finetuned/*
-data/models/pretrained/*
-
+# ...but keep the directory-preserving placeholders
+!data/**/.gitkeep
 
 /src/txn_model/wandb/
 *wandb/
