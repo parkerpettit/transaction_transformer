@@ -193,9 +193,7 @@ cython_debug/
 .cursorignore
 .cursorindexingignoresrc/txn_model/txn_checkpoint.pt
 # Local dataset directories and config overrides
-/data/
-/datasets/
-txn_data_config.*
+
 *.feather
 *.pt
 *.csv

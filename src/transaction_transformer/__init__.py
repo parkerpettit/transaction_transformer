@@ -6,8 +6,8 @@ Pretrain on next-row prediction, then fine-tune for downstream tasks.
 """
 
 __version__ = "0.1.0"
-__author__ = "Your Name"
-__email__ = "your.email@example.com"
+__author__ = "Parker Pettit"
+__email__ = "ppettit@mit.edu"
 
 # Import main classes and functions from submodules
 from .data.preprocessing import FieldSchema, get_encoders, get_scaler, build_quantile_binner, normalize, encode_df, preprocess
@@ -17,7 +17,7 @@ from .modeling.models import FeaturePredictionModel, TransformerEmbedder, FraudD
 
 from .modeling.training import main
 
-from .utils import ModelConfig
+from .config.config import ModelConfig
 
 # Convenience imports for common use cases
 __all__ = [
