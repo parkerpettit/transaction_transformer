@@ -32,10 +32,16 @@ model:
     padding_idx: 0
     freq_encoding_L: 8
     mask_token_init_std: 0.02
+
+  head:
+    hidden_dim: 512
+    depth: 0
+    dropout: 0.1
+
   
   training:
     total_epochs: 5
-    batch_size: 128
+    batch_size: 64
     learning_rate: 1.0e-4
     model_type: "mlm"  # "mlm" or "ar"
     p_field: 0.15
@@ -46,7 +52,7 @@ model:
     mixed_precision: false
     early_stopping_patience: 5
     device: "cuda"
-    num_workers: 0
+    num_workers: 4
   
   data:
     preprocessed_path: "data/processed/legit_processed.pt"

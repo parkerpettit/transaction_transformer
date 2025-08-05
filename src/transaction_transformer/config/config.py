@@ -40,6 +40,15 @@ class ClassificationConfig:
 
 
 @dataclass
+class HeadConfig:
+    """Configuration for prediction heads."""
+    hidden_dim: int = 512
+    depth: int = 0  # Number of layers in the MLP. 0 is a linear layer
+    dropout: float = 0.1
+
+
+
+@dataclass
 class TrainingConfig:
     """Configuration for training parameters."""
     # Basic training
@@ -108,6 +117,9 @@ class ModelConfig:
     
     # Classification configuration
     classification: ClassificationConfig = field(default_factory=ClassificationConfig)
+    
+    # Head configuration
+    head: HeadConfig = field(default_factory=HeadConfig)
     
     # Embedding configuration
     embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)

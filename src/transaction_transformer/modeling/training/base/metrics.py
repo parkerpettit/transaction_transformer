@@ -363,16 +363,16 @@ class MetricsTracker:
         
         # Compute metrics based on what we've been tracking
         if self.all_labels:  # Binary classification
-            print(f"Computing and logging binary metrics for {model_type} epoch {epoch}")
+            print(f"Computing and logging binary metrics for {model_type} epoch {epoch + 1}")
             self._compute_binary_metrics()
-            print(f"Binary metrics computed and logged for {model_type} epoch {epoch}")
+            print(f"Binary metrics computed and logged for {model_type} epoch {epoch + 1}")
         else:  # Transaction prediction
-            print(f"Computing transaction metrics for {model_type} epoch {epoch}")
+            print(f"Computing transaction metrics for {model_type} epoch {epoch + 1}")
             self._compute_transaction_metrics()
-            print(f"Transaction metrics computed for {model_type} epoch {epoch}")
-            print(f"Logging transaction plots for {model_type} epoch {epoch}")
+            print(f"Transaction metrics computed for {model_type} epoch {epoch + 1}")
+            print(f"Logging transaction plots for {model_type} epoch {epoch + 1}")
             self._log_transaction_plots(model_type)
-            print(f"Transaction plots logged for {model_type} epoch {epoch}")
+            print(f"Transaction plots logged for {model_type} epoch {epoch + 1}")
         
         # Add epoch and model_type info
         
@@ -381,9 +381,9 @@ class MetricsTracker:
         # Log to wandb
         if self.wandb_run:
             wandb_metrics = {f"{model_type}_{k}": v for k, v in self.metrics.items()}
-            print(f"Logging metrics to wandb for {model_type} epoch {epoch}")
+            print(f"Logging metrics to wandb for {model_type} epoch {epoch + 1}")
             self.wandb_run.log(wandb_metrics)
-            print(f"Metrics logged to wandb for {model_type} epoch {epoch}")
+            print(f"Metrics logged to wandb for {model_type} epoch {epoch + 1}")
         
         # Store in history
         return

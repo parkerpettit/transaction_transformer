@@ -26,19 +26,19 @@ class FeaturePredictionHead(nn.Module):
             V = schema.cat_encoders[name].vocab_size
             heads[name] = build_mlp(
                 input_dim=d_field,
-                hidden_dim=config.classification.hidden_dim,
+                hidden_dim=config.head.hidden_dim,
                 output_dim=V,
-                depth=config.classification.depth,
-                dropout=config.classification.dropout,
+                depth=config.head.depth,
+                dropout=config.head.dropout,
             )
         for name in cont_names:
             V = schema.cont_binners[name].num_bins
             heads[name] = build_mlp(
                 input_dim=d_field,
-                hidden_dim=config.classification.hidden_dim,
+                hidden_dim=config.head.hidden_dim,
                 output_dim=V,
-                depth=config.classification.depth,
-                dropout=config.classification.dropout,
+                depth=config.head.depth,
+                dropout=config.head.dropout,
             )
         self.heads = heads
         self.all_names = all_names
@@ -75,4 +75,4 @@ class ClassificationHead(nn.Module):
         )
 
     def forward(self, x: Tensor) -> Tensor:
-        return self.mlp(x) # (B, L, M) -> (B, L) -> (B,)
+        return self.mlp(x) # (B, L, M) -> (B, 1) -> (B,)

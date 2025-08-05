@@ -115,7 +115,7 @@ class BaseTrainer(ABC):
             else:
                 patience_counter += 1
                 if patience_counter >= self.patience:
-                    print(f"Early stopping triggered after {epoch} epochs.")
+                    print(f"Early stopping triggered after {epoch + 1} epochs.")
                     break
             
             # Print progress

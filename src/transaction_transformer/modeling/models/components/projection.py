@@ -4,11 +4,6 @@ from torch import Tensor
 from transaction_transformer.config.config import ModelConfig
 from transaction_transformer.data.preprocessing.tokenizer import FieldSchema
 
-
-
-
-
-
         
 class RowProjector(nn.Module):
     """
@@ -55,7 +50,6 @@ class RowExpander(nn.Module):
         d_field = config.field_transformer.d_model
         d_row = config.sequence_transformer.d_model
         row_types = config.row_types
-        # No longer needed since both AR and MLM use same format
         self.K = K
         self.d_field = d_field
 

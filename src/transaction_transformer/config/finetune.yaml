@@ -40,8 +40,8 @@ model:
     mask_token_init_std: 0.02
   
   training:
-    total_epochs: 100
-    batch_size: 64 
+    total_epochs: 10
+    batch_size: 128 
     learning_rate: 1.0e-4
     model_type: "mlm"  # "mlm" or "ar"
     p_field: 0.15
@@ -52,7 +52,7 @@ model:
     mixed_precision: false
     early_stopping_patience: 5
     device: "cuda"
-    num_workers: 0
+    num_workers: 4
     positive_weight: 9.08  # Weight for positive (fraud) class. if 1.0, calculate from data
     #   Label statistics from full_processed.pt with include_all_fraud: true
     #   Positive samples: 20677

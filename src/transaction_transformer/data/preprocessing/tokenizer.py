@@ -135,18 +135,36 @@ def normalize(df: pd.DataFrame, scaler: StandardScaler, cont_features: List[str]
 
 
 def build_quantile_binner(series: pd.Series, num_bins: int = 100) -> NumBinner:
-    """Build a quantile-based binner for numerical features using numpy for memory efficiency."""
+    """Build a quantile-based binner for numerical features, ensuring bin uniqueness."""
 
-    # Use the paper's approach: create quantiles and remove duplicates
+    # 1. Calculate initial quantiles
     qtls = np.arange(0.0, 1.0 + 1 / num_bins, 1 / num_bins)
     edges = np.quantile(series.to_numpy(), qtls)
-    edges = np.sort(np.unique(edges))
+
+    # 2. Handle duplicate edges by adding small epsilon to make them unique
+    # This is crucial for skewed distributions where many quantiles map to the same value
+    unique_edges, counts = np.unique(edges, return_counts=True)
     
-    # Ensure we have at least 2 edges (min and max)
+    if len(unique_edges) < len(edges):
+        # Identify locations of duplicate edges
+        for val, count in zip(unique_edges, counts):
+            if count > 1:
+                # Find where the duplicates are
+                indices = np.where(edges == val)[0]
+                # Add a tiny, linearly increasing noise to make them unique
+                # Epsilon is small enough to not significantly alter the distribution
+                epsilon = np.finfo(float).eps * 100
+                noise = np.linspace(0, epsilon * (count - 1), count)
+                edges[indices] += noise
+
+    # 3. Ensure edges are sorted after adding noise
+    edges = np.sort(edges)
+
+    # 4. Final check for edge cases
     if len(edges) < 2:
         edges = np.array([series.min(), series.max()])
     
-    # Convert to torch tensor
-    return NumBinner(edges=torch.from_numpy(edges))
+    # 5. Convert to torch tensor
+    return NumBinner(edges=torch.from_numpy(edges).float())
 
 
