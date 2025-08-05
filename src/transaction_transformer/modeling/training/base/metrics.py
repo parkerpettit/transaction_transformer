@@ -341,7 +341,6 @@ class MetricsTracker:
             labels=self.class_names,
         )
         # Also log a confusion matrix at threshold 0.5 (FPR not computed, just threshold)
-        
         preds_05 = (probs_np >= 0.5).astype(int)
         cm_05 = confusion_matrix(labels_np, preds_05, labels=[0, 1])
         fig_05, ax_05 = plt.subplots(figsize=(8, 6))

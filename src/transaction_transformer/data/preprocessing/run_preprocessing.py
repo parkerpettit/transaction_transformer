@@ -87,7 +87,7 @@ if __name__ == "__main__":
     assert legit_test_raw["is_fraud"].sum() == 0
 
     # ---------------------------------------------------------------------
-    #                  FIT + APPLY ARTEFACTS FOR FULL DATASET
+    #                  FIT + APPLY FOR FULL DATASET
     # ---------------------------------------------------------------------
     print("[2] Fitting encoders/scaler for FULL dataset (train split only)…")
     schema_full = build_schema(  # type: ignore[arg-type]
@@ -142,3 +142,4 @@ if __name__ == "__main__":
     )
 
     print("Done")
+    #TODO print quantile bin distribution
