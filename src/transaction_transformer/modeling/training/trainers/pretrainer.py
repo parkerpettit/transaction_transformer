@@ -155,8 +155,8 @@ class Pretrainer(BaseTrainer):
             num_batches = 0
             batch_idx = 0
             for batch in self.train_bar:
-                # if batch_idx == 50:
-                #     break
+                if batch_idx == 50:
+                    break
                 logits, labels_cat, labels_cont = self.forward_pass(batch)
                 loss = self.compute_loss(logits, labels_cat, labels_cont)
                 # Backward pass
@@ -193,8 +193,8 @@ class Pretrainer(BaseTrainer):
         batch_idx = 0
         with torch.no_grad():
             for batch in self.val_bar:
-                # if batch_idx == 50:
-                #     break
+                if batch_idx == 50:
+                    break
                 logits, labels_cat, labels_cont = self.forward_pass(batch)
                 loss = self.compute_loss(logits, labels_cat, labels_cont)
 
@@ -215,6 +215,10 @@ class Pretrainer(BaseTrainer):
 
                 if batch_idx == 0:
                     self.metrics.print_sample_predictions(logits, targets, self.schema)
+                if batch_idx % 5 == 0 and self.metrics.wandb_run:
+                    self.metrics.wandb_run.log({
+                        "val_loss": loss.item(),
+                    }, commit=True)
                 batch_idx += 1
 
-        return {"val_loss": total_loss / num_batches}
+        return {"loss": total_loss / num_batches}
