@@ -44,7 +44,7 @@ class BaseTrainer(ABC):
             self.checkpoint_manager = CheckpointManager(self.config.model.finetune_checkpoint_dir) 
         self.metrics = MetricsTracker(ignore_index=self.config.model.data.ignore_idx)
         self.metrics.wandb_run = wandb.init(project=config.metrics.wandb_project, name=config.metrics.run_name, config=config.to_dict(), tags=[config.model.training.model_type])
-        self.metrics.class_names = self.schema.cat_features + self.schema.cont_features if config.model.mode == "pretrain" else ["fraud", "nonfraud"]
+        self.metrics.class_names = self.schema.cat_features + self.schema.cont_features if config.model.mode == "pretrain" else ["non-fraud", "fraud"]
         self.patience = config.model.training.early_stopping_patience
         # Training state
         self.current_epoch = 0

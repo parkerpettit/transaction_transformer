@@ -48,7 +48,7 @@ class TxnDataset(Dataset):
             if group_sizes[i] >= window
         ]
 
-        # 3) build your sliding‐window index list
+        # 3) build sliding‐window index list
         idx_set = set()
         for gidx, (base, length) in enumerate(self.group_offsets):
             for off in range(0, length - window + 1, stride):
