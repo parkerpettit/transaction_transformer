@@ -83,19 +83,19 @@ class BaseTrainer(ABC):
         """Main training loop."""
         patience_counter = 0
         for epoch in range(num_epochs):
-            self.current_epoch = epoch
-
+            self.current_epoch = epoch + 1
+            self.metrics.current_epoch = self.current_epoch
             # Train for one epoch
             self.metrics.start_epoch()
             self.train_bar = tqdm(self.train_loader, desc=f"Training Epoch {epoch+1}", bar_format=self.bar_fmt, leave=True)
             train_metrics = self.train_epoch()
-            self.metrics.end_epoch(epoch, "train")
+            self.metrics.end_epoch(self.current_epoch, "train")
 
             # Validate for one epoch
             self.metrics.start_epoch()
             self.val_bar = tqdm(self.val_loader, desc=f"Validation Epoch {epoch+1}", bar_format=self.bar_fmt, leave=True)
             val_metrics = self.validate_epoch()
-            self.metrics.end_epoch(epoch, "val")
+            self.metrics.end_epoch(self.current_epoch, "val")
             
             # Save checkpoint if validation loss improves
             if val_metrics.get("loss", float('inf')) < self.best_val_loss:

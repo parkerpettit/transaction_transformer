@@ -43,26 +43,19 @@ class FinetuneTrainer(BaseTrainer):
         pos_weight_tensor = torch.tensor([pos_weight], device=device)
         print(f"Using positive weight: {pos_weight_tensor}")
         self.loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight_tensor)
-
+        self.val_loss_fn = nn.BCEWithLogitsLoss() # no pos_weight for validation
 
     def forward_pass(self, batch: Dict[str, torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
         """Forward pass for a batch. Returns logits and labels, both of shape (B,)"""
-        cat_in = batch["cat"].to(self.device) # (B, L-1, C) or (B, L, C)
-        cont_in = batch["cont"].to(self.device) # (B, L-1, F) or (B, L, F)
+        cat_in = batch["cat"].to(self.device) #  (B, L, C)
+        cont_in = batch["cont"].to(self.device) # (B, L, F)
         labels = batch["downstream_label"].to(self.device) # (B,)
         logits = self.model(
             cat=cat_in,
             cont=cont_in,
-        ) # dict of length K = C + F, where each key is a feature name and each value is a (B, V_field) tensor.
+        ) # (B,)
         return logits, labels
 
-    def compute_loss(self, logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
-        """Compute loss for binary classification.
-        BCEWithLogitsLoss expects the target tensor to be of floating type with the
-        same shape as the input logits. Cast labels to float32 inside the loss
-        computation to avoid dtype mismatches (Long vs. Float).
-        """
-        return self.loss_fn(logits, labels.float())
 
     def train_epoch(self) -> Dict[str, float]:
         """Train for one epoch."""
@@ -71,7 +64,7 @@ class FinetuneTrainer(BaseTrainer):
         batch_idx = 0
         for batch in self.train_bar:
             logits, labels = self.forward_pass(batch)
-            loss = self.compute_loss(logits, labels) # (B,)
+            loss = self.loss_fn(logits, labels.float()) # (B,)
 
             self.optimizer.zero_grad()
             loss.backward()
@@ -88,6 +81,7 @@ class FinetuneTrainer(BaseTrainer):
                     self.metrics.wandb_run.log({
                         "train_loss": loss.item(),
                         "learning_rate": self.optimizer.param_groups[0]['lr'],
+                        "epoch": self.metrics.current_epoch,
                     }, commit=True)
             batch_idx += 1
         return {"loss": total_loss / len(self.train_loader)}
@@ -99,7 +93,7 @@ class FinetuneTrainer(BaseTrainer):
         batch_idx = 0
         for batch in self.val_bar:
             logits, labels = self.forward_pass(batch)
-            loss = self.compute_loss(logits, labels) # (B,)
+            loss = self.val_loss_fn(logits, labels.float()) # (B,)
             self.metrics.update_binary_classification(logits, labels)
             total_loss += loss.item()
             self.val_bar.set_postfix({
@@ -109,6 +103,7 @@ class FinetuneTrainer(BaseTrainer):
             if batch_idx % 5 == 0 and self.metrics.wandb_run:
                     self.metrics.wandb_run.log({
                         "val_loss": loss.item(),
+                        "epoch": self.metrics.current_epoch,
                     }, commit=True)
 
         return {"loss": total_loss / len(self.val_loader)}

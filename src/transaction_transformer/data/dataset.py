@@ -28,35 +28,49 @@ class TxnDataset(Dataset):
         stride: int = 1,
         include_all_fraud: bool = False,
     ):
-        # 1) convert once to torch and pin into shared memory
-        cat_np   = df[schema.cat_features].to_numpy(dtype=np.int64)
-        cont_np  = df[schema.cont_features].to_numpy(dtype=np.float32)
-        label_np = df["is_fraud"].to_numpy(dtype=np.int64)
+        # 1) Convert DataFrame columns to numpy arrays, then to torch tensors in shared memory.
+        #    This is done once up front for efficiency, so all data access is via fast torch indexing.
+        #    - Categorical features: shape (num_rows, num_cat_features), dtype int64
+        #    - Continuous features:  shape (num_rows, num_cont_features), dtype float32
+        #    - Labels:               shape (num_rows,), dtype int64
+        cat_np   = df[schema.cat_features].to_numpy(dtype=np.int64)    # Extract categorical columns as numpy array
+        cont_np  = df[schema.cont_features].to_numpy(dtype=np.float32) # Extract continuous columns as numpy array
+        label_np = df["is_fraud"].to_numpy(dtype=np.int64)             # Extract label column as numpy array
 
-        self.cat_arr   = torch.from_numpy(cat_np).share_memory_()
-        self.cont_arr  = torch.from_numpy(cont_np).share_memory_()
-        self.labels    = torch.from_numpy(label_np).share_memory_()
-        self.window    = window
-        self.stride    = stride
+        # Convert numpy arrays to torch tensors and move to shared memory for fast access in DataLoader workers
+        self.cat_arr   = torch.from_numpy(cat_np).share_memory_()      # (num_rows, num_cat_features)
+        self.cont_arr  = torch.from_numpy(cont_np).share_memory_()     # (num_rows, num_cont_features)
+        self.labels    = torch.from_numpy(label_np).share_memory_()    # (num_rows,)
+        self.window    = window                                        # Sliding window size (number of rows per sample)
+        self.stride    = stride                                        # Step size for sliding window
 
-        # 2) compute group offsets
-        group_sizes = df.groupby(group_by, sort=False).size().to_numpy(dtype=np.int32)
-        starts = np.concatenate([[0], group_sizes.cumsum()[:-1]])
+        # 2) Compute group offsets for each group (e.g., user_id)
+        #    - group_sizes: number of rows for each group (e.g., number of transactions per user)
+        #    - starts: starting row index for each group in the full dataset
+        #    - self.group_offsets: list of (start_index, group_length) for each group with enough rows for a window
+        group_sizes = df.groupby(group_by, sort=False).size().to_numpy(dtype=np.int32)  # (num_groups,)
+        starts = np.concatenate([[0], group_sizes.cumsum()[:-1]])                       # (num_groups,)
         self.group_offsets = [
-            (int(starts[i]), int(group_sizes[i]))
+            (int(starts[i]), int(group_sizes[i]))                                       # (start_row, group_length)
             for i in range(len(group_sizes))
-            if group_sizes[i] >= window
+            if group_sizes[i] >= window                                                 # Only keep groups with enough rows
         ]
 
-        # 3) build sliding‐window index list
+        # 3) Build a set of all valid (group_index, offset) pairs for sliding windows
+        #    - For each group, slide a window of length 'window' with step size 'stride'
+        #    - Each (gidx, off) means: in group gidx, take rows [base+off : base+off+window]
+        #    - If include_all_fraud is True, also add windows ending at every fraud row (may overlap)
         idx_set = set()
         for gidx, (base, length) in enumerate(self.group_offsets):
+            # Standard sliding windows for this group
             for off in range(0, length - window + 1, stride):
                 idx_set.add((gidx, off))
-            labels_grp = self.labels[base : base + length].numpy()
-            if include_all_fraud: # include all fraud samples, may lead to overlapping windows
-                for pos in np.nonzero(labels_grp == 1)[0]:
-                    off = int(pos) - (window - 1)
+            # Optionally, for every fraud label in this group, ensure a window ending at that row is included
+            labels_grp = self.labels[base : base + length].numpy()  # Get labels for this group as numpy array
+            if include_all_fraud:  # If True, add extra windows ending at every fraud row
+                for pos in np.nonzero(labels_grp == 1)[0]:          # Find all positions where label == 1 (fraud)
+                    off = int(pos) - (window - 1)                   # Compute window start so window ends at pos
+                    # Only add if window fits within group bounds
                     if 0 <= off <= length - window:
                         idx_set.add((gidx, off))
         

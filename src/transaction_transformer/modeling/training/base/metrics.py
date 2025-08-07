@@ -15,6 +15,9 @@ from sklearn.metrics import (
     roc_auc_score,
     average_precision_score,
     ConfusionMatrixDisplay,
+    roc_curve,
+    precision_recall_curve,
+    auc,
 )
 import wandb
 from transaction_transformer.data.preprocessing.tokenizer import FieldSchema
@@ -35,8 +38,7 @@ class MetricsTracker:
         
         # Training metrics
         self.metrics = defaultdict(list)
-        self.current_epoch_metrics = defaultdict(float)
-        self.current_epoch_count = 0
+        self.current_epoch = 0
         self.start_time = None
         
         # Binary classification tracking
@@ -53,8 +55,6 @@ class MetricsTracker:
     
     def start_epoch(self) -> None:
         """Start tracking metrics for a new epoch."""
-        self.current_epoch_metrics.clear()
-        self.current_epoch_count = 0
         self.start_time = time.time()
         
         # Reset binary classification tracking
@@ -283,21 +283,40 @@ class MetricsTracker:
         if not self.wandb_run:
             return
 
+
         cm = confusion_matrix(labels_np, preds_np, labels=[0, 1])
+        precision, recall, f1, _ = precision_recall_fscore_support(
+            labels_np, preds_np, average="binary", zero_division="warn"
+        )
+
         fig, ax = plt.subplots(figsize=(8, 6))
         disp = ConfusionMatrixDisplay(cm, display_labels=self.class_names)
         disp.plot(ax=ax, cmap="Blues", values_format="d")
         ax.set_title(f"Confusion Matrix @ FPR {target_fpr:.3f}%")
-        
+
+        # Add precision, recall, and f1 underneath the confusion matrix
+        metrics_text = (
+            f"Precision: {precision:.3f} | Recall: {recall:.3f} | F1: {f1:.3f}"
+        )
+        # Place the metrics text below the confusion matrix
+        fig.text(0.45, 0.0, metrics_text, ha="center", va="bottom", fontsize=10)
+
         # Create unique key for each confusion matrix based on target FPR with % symbol
         cm_key = f"confusion_matrix_fpr_{target_fpr:.3f}%".replace(".", "_").replace("%", "pct")
-        self.wandb_run.log({cm_key: wandb.Image(fig)})
+        self.wandb_run.log({cm_key: wandb.Image(fig),
+                            "epoch": self.current_epoch,
+                            })
         plt.close(fig)
+
 
     def _log_roc_pr_curves(self, labels_np: np.ndarray, probs_np: np.ndarray) -> None:
         """Log ROC and PR curves to wandb (not threshold-dependent)."""
         if not self.wandb_run:
             return
+
+
+        # Plot ROC and PR curves using sklearn and matplotlib, then log to wandb as images
+
 
         probas_2d = np.vstack([1 - probs_np, probs_np]).T
 
@@ -311,20 +330,33 @@ class MetricsTracker:
             y_probas=probas_2d.tolist(),
             labels=self.class_names,
         )
+
         # Also log a confusion matrix at threshold 0.5 (FPR not computed, just threshold)
         preds_05 = (probs_np >= 0.5).astype(int)
         cm_05 = confusion_matrix(labels_np, preds_05, labels=[0, 1])
         fig_05, ax_05 = plt.subplots(figsize=(8, 6))
+        precision, recall, f1, _ = precision_recall_fscore_support(
+            labels_np, preds_05, average="binary", zero_division="warn"
+        )
+
         disp_05 = ConfusionMatrixDisplay(cm_05, display_labels=self.class_names)
         disp_05.plot(ax=ax_05, cmap="Blues", values_format="d")
         ax_05.set_title("Confusion Matrix @ threshold 0.5")
         cm_key_05 = "confusion_matrix_thresh_0_5"
-        self.wandb_run.log({cm_key_05: wandb.Image(fig_05)})
-        plt.close(fig_05)
-        self.wandb_run.log({
-            "roc_curve": roc_plot,
-            "pr_curve": pr_plot
-        })
+        metrics_text = (
+            f"Precision: {precision:.3f} | Recall: {recall:.3f} | F1: {f1:.3f}"
+        ) # Place the metrics text below the confusion matrix
+        fig_05.text(0.45, 0.0, metrics_text, ha="center", va="bottom", fontsize=10)
+        self.wandb_run.log({cm_key_05: wandb.Image(fig_05),
+                            "roc_curve": roc_plot,
+                            "pr_curve": pr_plot,
+                            "val_precision@0.5_threshold": float(precision),
+                            "val_recall@0.5_threshold": float(recall),
+                            "val_f1@0.5_threshold": float(f1),
+                            "epoch": self.current_epoch,
+                            })
+        plt.close("all")
+    
     
     def _log_transaction_plots(self, model_type: str) -> None:
         """Log transaction prediction plots to wandb."""
@@ -355,7 +387,9 @@ class MetricsTracker:
         plt.xticks(rotation=45, ha='right')
         plt.tight_layout()
         
-        self.wandb_run.log({f"{model_type}_feature_accuracy": wandb.Image(fig)})
+        self.wandb_run.log({f"{model_type}_feature_accuracy": wandb.Image(fig),
+                            "epoch": self.current_epoch,
+                            })
         plt.close(fig)
     
     def end_epoch(self, epoch: int, model_type: str = "train") -> None:

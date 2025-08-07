@@ -11,9 +11,9 @@ from transaction_transformer.data.preprocessing import (
 )
 from typing import Tuple
 
-# NOTE: This script intentionally fits artefacts (encoders, scalers, binners)
+# NOTE: This script intentionally fits encoders, scalers, and binners
 # on *training splits only* to avoid any form of data leakage. We build
-# completely separate artefacts for the "full" dataset (fraud + legit) and
+# completely separate artifacts for the "full" dataset (fraud + legit) and
 # the "legit" dataset (non-fraud only).
 
 

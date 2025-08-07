@@ -173,6 +173,7 @@ class Pretrainer(BaseTrainer):
                     self.metrics.wandb_run.log({
                         "train_loss": loss.item(),
                         "learning_rate": self.optimizer.param_groups[0]['lr'],
+                        "epoch": self.metrics.current_epoch,
                     }, commit=True)
                 
                 batch_idx += 1
@@ -218,6 +219,7 @@ class Pretrainer(BaseTrainer):
                 if batch_idx % 5 == 0 and self.metrics.wandb_run:
                     self.metrics.wandb_run.log({
                         "val_loss": loss.item(),
+                        "epoch": self.metrics.current_epoch,
                     }, commit=True)
                 batch_idx += 1
 
