@@ -38,4 +38,5 @@ dev = [
 [project.scripts]
 pretrain = "transaction_transformer.modeling.training.pretrain:main"
 finetune = "transaction_transformer.modeling.training.finetune:main"
+evaluate_models = "transaction_transformer.modeling.training.evaluate_model:main"
 run_preprocessing = "transaction_transformer.data.preprocessing.run_preprocessing:main"
