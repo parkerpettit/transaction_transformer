@@ -1,7 +1,10 @@
 import torch.nn as nn
 from typing import List
 
-def build_mlp(input_dim: int, hidden_dim: int, output_dim: int, depth: int, dropout: float = 0.1) -> nn.Sequential:
+
+def build_mlp(
+    input_dim: int, hidden_dim: int, output_dim: int, depth: int, dropout: float = 0.1
+) -> nn.Sequential:
     """
     Utility function to build an MLP with the specified depth and dropout.
     """
@@ -19,4 +22,3 @@ def build_mlp(input_dim: int, hidden_dim: int, output_dim: int, depth: int, drop
         layers.append(nn.Linear(input_dim, output_dim))
         layers.append(nn.Dropout(dropout))
     return nn.Sequential(*layers)
-    

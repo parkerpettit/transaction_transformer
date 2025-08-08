@@ -1,7 +1,7 @@
 import pathlib
 from typing import List, Tuple
 import pandas as pd
-import numpy as np      
+import numpy as np
 
 
 def preprocess(
@@ -20,7 +20,9 @@ def preprocess(
     df = pd.read_csv(file)
 
     # 2) Generate binary fraud flag
-    df["is_fraud"] = df["Is Fraud?"].str.lower().map({"yes": 1, "no": 0}).astype(np.int8)
+    df["is_fraud"] = (
+        df["Is Fraud?"].str.lower().map({"yes": 1, "no": 0}).astype(np.int8)
+    )
     df.drop(columns=["Is Fraud?"], inplace=True)
     # GET ONLY LEGIT TRANSACTIONS FOR PRETRAINING
     # df = df[df["is_fraud"] == 0]
@@ -35,11 +37,7 @@ def preprocess(
     # strip dollar sign from amounts
     for c in cont_features:
         if df[c].dtype == object:
-            df[c] = (
-                df[c]
-                .str.replace(r"[\$,]", "", regex=True)
-                .astype("float32")
-            )
+            df[c] = df[c].str.replace(r"[\$,]", "", regex=True).astype("float32")
         else:
             df[c] = pd.to_numeric(df[c], downcast="float")
 
@@ -55,11 +53,13 @@ def preprocess(
     df["rank"] = df.groupby(group_key).cumcount()
     df["n_txns"] = df.groupby(group_key)["rank"].transform("max") + 1
     df["split"] = np.where(
-        df["rank"] < df["n_txns"] * train_frac, "train",
-        np.where(df["rank"] < df["n_txns"] * (train_frac + val_frac), "val", "test")
+        df["rank"] < df["n_txns"] * train_frac,
+        "train",
+        np.where(df["rank"] < df["n_txns"] * (train_frac + val_frac), "val", "test"),
     )
     # 7) Subset and drop intermediates
     drop_cols = ["rank", "n_txns", "split"]
+
     def subset(name: str) -> pd.DataFrame:
         d = df[df["split"] == name]
         if not isinstance(d, pd.DataFrame):
@@ -71,6 +71,6 @@ def preprocess(
 
     train_df = subset("train")
     val_df = subset("val")
-    test_df  = subset("test")
+    test_df = subset("test")
     del df  # free RAM
     return train_df, val_df, test_df

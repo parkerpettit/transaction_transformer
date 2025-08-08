@@ -11,6 +11,6 @@ from .models.downstream import FraudDetectionModel
 __all__ = [
     # Models
     "FeaturePredictionModel",
-    "TransformerEmbedder", 
+    "TransformerEmbedder",
     "FraudDetectionModel",
 ]

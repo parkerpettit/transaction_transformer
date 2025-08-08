@@ -3,7 +3,9 @@ from torch import Tensor, LongTensor
 from transaction_transformer.data.preprocessing.tokenizer import FieldSchema
 from transaction_transformer.config.config import ModelConfig
 from transaction_transformer.modeling.models.embedder import TransformerEmbedder
-from transaction_transformer.modeling.models.components.heads import FeaturePredictionHead
+from transaction_transformer.modeling.models.components.heads import (
+    FeaturePredictionHead,
+)
 
 
 # -------------------------------------------------------------------------------------- #
@@ -17,8 +19,9 @@ class FeaturePredictionModel(nn.Module):
 
     Returns: A dictionary of length K = C + F, where each key is a feature name and each value is a (B, L, V_field) tensor.
     C is the number of categorical features, F is the number of continuous features.
-    
+
     """
+
     def __init__(self, config: ModelConfig, schema: FieldSchema):
         super().__init__()
         self.config = config
@@ -27,7 +30,9 @@ class FeaturePredictionModel(nn.Module):
         # No longer needed since both AR and MLM use same format
 
     def forward(self, cat: LongTensor, cont: Tensor, row_type: int = 0):
-        embeddings = self.transaction_embedding_model(cat, cont, row_type) # (B, L, M)
+        embeddings = self.transaction_embedding_model(cat, cont, row_type)  # (B, L, M)
         # For both AR and MLM, return predictions at all positions
         # The loss function will handle masking appropriately
-        return self.feature_prediction_head(embeddings) # (B, L, M) -> dict[name]: (B, L, V_field) 
+        return self.feature_prediction_head(
+            embeddings
+        )  # (B, L, M) -> dict[name]: (B, L, V_field)

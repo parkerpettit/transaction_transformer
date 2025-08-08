@@ -10,16 +10,16 @@ from .config import (
     MetricsConfig,
     TransformerConfig,
     EmbeddingConfig,
-    ConfigManager
+    ConfigManager,
 )
 
 __all__ = [
     "Config",
-    "ModelConfig", 
+    "ModelConfig",
     "TrainingConfig",
     "DataConfig",
     "MetricsConfig",
     "TransformerConfig",
     "EmbeddingConfig",
     "ConfigManager",
-    ] 
+]

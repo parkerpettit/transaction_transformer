@@ -14,8 +14,8 @@ __all__ = [
     "EmbeddingLayer",
     "FieldTransformer",
     "FeaturePredictionHead",
-    "ClassificationHead", 
+    "ClassificationHead",
     "RowProjector",
     "RowExpander",
     "SequenceTransformer",
-] 
+]

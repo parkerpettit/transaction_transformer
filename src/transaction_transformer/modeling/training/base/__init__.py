@@ -10,6 +10,6 @@ from .metrics import MetricsTracker
 
 __all__ = [
     "BaseTrainer",
-    "CheckpointManager", 
+    "CheckpointManager",
     "MetricsTracker",
-] 
+]

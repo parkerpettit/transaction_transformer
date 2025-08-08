@@ -49,7 +49,7 @@ model:
     joint_timestamp_masking: true
     optimizer: "adamw"
     scheduler: "cosine"
-    mixed_precision: false
+    mixed_precision: true
     early_stopping_patience: 5
     device: "cuda"
     num_workers: 4

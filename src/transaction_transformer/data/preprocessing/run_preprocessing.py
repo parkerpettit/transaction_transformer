@@ -22,8 +22,19 @@ def main():
     #                          COLUMN DEFINITIONS
     # ---------------------------------------------------------------------
     cat_features = [
-        "User", "Card", "Use Chip", "Merchant Name", "Merchant City",
-        "Merchant State", "Zip", "MCC", "Errors?", "Year", "Month", "Day", "Hour",
+        "User",
+        "Card",
+        "Use Chip",
+        "Merchant Name",
+        "Merchant City",
+        "Merchant State",
+        "Zip",
+        "MCC",
+        "Errors?",
+        "Year",
+        "Month",
+        "Day",
+        "Hour",
     ]
     cont_features = ["Amount"]
 
@@ -31,12 +42,20 @@ def main():
     #                      INITIAL CSV PRE-PROCESSING
     # ---------------------------------------------------------------------
     print("[1] Running initial CSV preprocessing ...")
-    full_train_raw, full_val_raw, full_test_raw = preprocess(Path("data/raw/card_transaction.v1.csv"))
+    full_train_raw, full_val_raw, full_test_raw = preprocess(
+        Path("data/raw/card_transaction.v1.csv")
+    )
 
     print("[2] Creating legit-only splits ...")
-    legit_train_raw = full_train_raw[full_train_raw["is_fraud"] == 0].copy().reset_index(drop=True)
-    legit_val_raw = full_val_raw[full_val_raw["is_fraud"] == 0].copy().reset_index(drop=True)
-    legit_test_raw = full_test_raw[full_test_raw["is_fraud"] == 0].copy().reset_index(drop=True)
+    legit_train_raw = (
+        full_train_raw[full_train_raw["is_fraud"] == 0].copy().reset_index(drop=True)
+    )
+    legit_val_raw = (
+        full_val_raw[full_val_raw["is_fraud"] == 0].copy().reset_index(drop=True)
+    )
+    legit_test_raw = (
+        full_test_raw[full_test_raw["is_fraud"] == 0].copy().reset_index(drop=True)
+    )
     assert legit_train_raw["is_fraud"].sum() == 0
 
     # ---------------------------------------------------------------------
@@ -44,12 +63,12 @@ def main():
     # ---------------------------------------------------------------------
 
     def process_dataset(
-        train_raw: pd.DataFrame, 
-        val_raw: pd.DataFrame, 
-        test_raw: pd.DataFrame, 
-        name: str
+        train_raw: pd.DataFrame,
+        val_raw: pd.DataFrame,
+        test_raw: pd.DataFrame,
+        name: str,
     ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, FieldSchema]:
-        
+
         print(f"\n[{name.upper()}] Processing dataset ...")
 
         # Step 1: Fit encoders and scaler on RAW training data
@@ -82,7 +101,7 @@ def main():
         train_df = encode_df(train_norm, schema.cat_encoders, schema.cat_features)
         val_df = encode_df(val_norm, schema.cat_encoders, schema.cat_features)
         test_df = encode_df(test_norm, schema.cat_encoders, schema.cat_features)
-        
+
         return train_df, val_df, test_df, schema
 
     # Process both full and legit datasets
@@ -98,6 +117,7 @@ def main():
     # ---------------------------------------------------------------------
     print("\n[INFO] Saving processed datasets and schemas ...")
     import torch
+
     torch.save(
         (full_train_df, full_val_df, full_test_df, schema_full),
         "data/processed/full_processed.pt",
@@ -114,7 +134,9 @@ def main():
     print("\n[INFO] Printing quantile bin distributions for verification ...\n")
     import numpy as np
 
-    def print_bin_distributions(df: pd.DataFrame, schema: FieldSchema, dataset_name: str):
+    def print_bin_distributions(
+        df: pd.DataFrame, schema: FieldSchema, dataset_name: str
+    ):
         """Prints the bin counts for each continuous feature in a dataframe."""
         print(f"--- {dataset_name} ---")
         for feat in schema.cont_features:
@@ -125,7 +147,7 @@ def main():
             if len(values) == 0:
                 print(f"Feature '{feat}': No non-NaN values, skipping.")
                 continue
-            
+
             bin_ids = binner.bin(torch.from_numpy(values)).numpy()
             counts = np.bincount(bin_ids, minlength=binner.num_bins)
             print(f"Feature '{feat}' bin counts (total {len(counts)} bins):")
@@ -140,7 +162,5 @@ def main():
         print_bin_distributions(df, schema, name)
 
 
-
 if __name__ == "__main__":
     main()
-

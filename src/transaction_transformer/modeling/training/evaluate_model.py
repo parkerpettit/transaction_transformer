@@ -3,6 +3,7 @@ Finetuning script for fraud detection model.
 
 Supports both MLM and AR finetuning modes.
 """
+
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -12,12 +13,15 @@ from pathlib import Path
 from tqdm import tqdm
 from transaction_transformer.data import TxnDataset
 from transaction_transformer.modeling.models import FraudDetectionModel
-from transaction_transformer.modeling.training.trainers.finetune_trainer import FinetuneTrainer
+from transaction_transformer.modeling.training.trainers.finetune_trainer import (
+    FinetuneTrainer,
+)
 from transaction_transformer.modeling.training.trainers.evaluater import Evaluater
 from transaction_transformer.config.config import Config, ConfigManager
 from transaction_transformer.data.preprocessing.tokenizer import FieldSchema
 from transaction_transformer.data.collator import FinetuneCollator
 import pandas as pd
+
 
 def create_datasets(
     df: pd.DataFrame,
@@ -25,7 +29,7 @@ def create_datasets(
     schema: FieldSchema,
 ) -> TxnDataset:
     """Create dataset."""
-    
+
     # Create datasets
     dataset = TxnDataset(
         df=df,
@@ -33,12 +37,11 @@ def create_datasets(
         schema=schema,
         window=config.model.data.window,
         stride=5,
-        include_all_fraud=False
+        include_all_fraud=False,
     )
-    
-   
-    
+
     return dataset
+
 
 def evaluate(
     model_paths: List[str],
@@ -48,11 +51,11 @@ def evaluate(
     device: torch.device,
 ) -> Evaluater:
     """Evaluate model using AR finetuning."""
-    
+
     # Create collators
-    
+
     val_collator = FinetuneCollator(schema=schema)
-    
+
     val_loader = DataLoader(
         val_dataset,
         batch_size=config.model.training.batch_size,
@@ -60,14 +63,9 @@ def evaluate(
         collate_fn=val_collator,
         num_workers=config.model.training.num_workers,
         persistent_workers=True,
-        pin_memory=True
+        pin_memory=True,
     )
-    
-    
-    
 
-    
-   
     # Create evaluater
     evaluater = Evaluater(
         model_paths=model_paths,
@@ -78,6 +76,7 @@ def evaluate(
     )
     return evaluater
 
+
 def main():
     """Main pretraining function."""
     # validate each saved model
@@ -85,20 +84,25 @@ def main():
     config_manager = ConfigManager(config_path="finetune.yaml")
     config = config_manager.config
     print("Configuration loaded")
-    
-    
+
     # Load preprocessed data
-    train_df, val_df, test_df, schema = torch.load(config.model.data.preprocessed_path, weights_only=False)
+    train_df, val_df, test_df, schema = torch.load(
+        config.model.data.preprocessed_path, weights_only=False
+    )
     val_ds = create_datasets(val_df, config, schema)
-    model_paths = [str(Path(config.model.finetune_checkpoint_dir) / f"{config.model.training.model_type}_{config.model.mode}_best_model_{i+1}.pt") for i in range(7)]
+    model_paths = [
+        str(
+            Path(config.model.finetune_checkpoint_dir)
+            / f"{config.model.training.model_type}_{config.model.mode}_best_model_{i+1}.pt"
+        )
+        for i in range(7)
+    ]
 
     device = torch.device(config.get_device())
-    
-    
+
     # Select training model_type based on config
     evaluater = evaluate(model_paths, val_ds, schema, config, device)
-    
-    
+
     # Check if checkpoint exists and load it
     # checkpoint_path = Path(config.model.finetune_checkpoint_dir) / f"{config.model.training.model_type}_{config.model.mode}_best_model.pt"
     # if checkpoint_path.exists():
@@ -107,7 +111,7 @@ def main():
     #     print(f"Resuming from epoch {trainer.current_epoch + 1}")
     # else:
     #     print("No checkpoint found, starting from scratch")
-    
+
     print("Starting evaluation...")
     evaluater.evaluate()
 

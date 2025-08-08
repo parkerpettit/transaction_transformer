@@ -3,16 +3,20 @@ import torch
 from transaction_transformer.data.preprocessing import FieldSchema
 from transaction_transformer.config.config import ModelConfig
 
+
 class BaseTabCollator:
     """Base collator class for tabular data."""
-    
+
     def __init__(self, schema: FieldSchema):
         self.schema = schema
-        self.cont_binners = {name: binner for name, binner in self.schema.cont_binners.items()}
+        self.cont_binners = {
+            name: binner for name, binner in self.schema.cont_binners.items()
+        }
+
 
 class MLMTabCollator(BaseTabCollator):
     """MLM collator (optimized with vectorized operations)."""
-    
+
     def __init__(
         self,
         config: ModelConfig,
@@ -23,7 +27,7 @@ class MLMTabCollator(BaseTabCollator):
         self.p_row = config.training.p_row
         self.mask_idx = config.data.mask_idx
         self.ignore_idx = config.data.ignore_idx
-        
+
         # Precompute all constants for efficiency
         self.time_cat_idx = [self.schema.cat_idx(n) for n in self.schema.time_cat]
         self.cat_mask_id = self.mask_idx  # All categorical features use same mask_id
@@ -32,42 +36,55 @@ class MLMTabCollator(BaseTabCollator):
     @torch.no_grad()
     def __call__(self, batch: list[dict[str, torch.Tensor]]) -> dict[str, torch.Tensor]:
         # Each item: {"cat": (L,C) long, "cont": (L,F) float, "label": ... optional}
-        cats  = torch.stack([b["cat"]  for b in batch], 0)  # (B,L,C)
+        cats = torch.stack([b["cat"] for b in batch], 0)  # (B,L,C)
         conts = torch.stack([b["cont"] for b in batch], 0)  # (B,L,F)
-        labels = torch.stack([b["label"] for b in batch], 0) # (B,L)
+        labels = torch.stack([b["label"] for b in batch], 0)  # (B,L)
         B, L, C = cats.shape
         _, _, F = conts.shape
         device = cats.device
 
         # 1) Sample field masks (optimized)
-        field_mask_cat = (torch.rand(B, L, C, device=device) < self.p_field)
-        field_mask_cont = (torch.rand(B, L, F, device=device) < self.p_field)
+        field_mask_cat = torch.rand(B, L, C, device=device) < self.p_field
+        field_mask_cont = torch.rand(B, L, F, device=device) < self.p_field
 
         # 2) Joint timestamp masking (vectorized)
         if self.time_cat_idx:
-            time_cat_mask = field_mask_cat[..., self.time_cat_idx]  # (B, L, num_time_cat)
+            time_cat_mask = field_mask_cat[
+                ..., self.time_cat_idx
+            ]  # (B, L, num_time_cat)
             any_time_masked = time_cat_mask.any(dim=-1, keepdim=True)  # (B, L, 1)
-            field_mask_cat[..., self.time_cat_idx] |= any_time_masked.expand(-1, -1, len(self.time_cat_idx))
+            field_mask_cat[..., self.time_cat_idx] |= any_time_masked.expand(
+                -1, -1, len(self.time_cat_idx)
+            )
 
         # 3) Row masking (fused with field masking)
-        row_mask = (torch.rand(B, L, device=device) < self.p_row).unsqueeze(-1)  # (B, L, 1)
+        row_mask = (torch.rand(B, L, device=device) < self.p_row).unsqueeze(
+            -1
+        )  # (B, L, 1)
         mask_cat = field_mask_cat | row_mask.expand(-1, -1, C)  # (B, L, C)
         mask_cont = field_mask_cont | row_mask.expand(-1, -1, F)  # (B, L, F)
 
         # 4) Build labels (vectorized)
-        labels_cat = torch.full((B, L, C), fill_value=self.ignore_index, dtype=torch.long, device=device)
-        labels_cont = torch.full((B, L, F), fill_value=self.ignore_index, dtype=torch.long, device=device)
+        labels_cat = torch.full(
+            (B, L, C), fill_value=self.ignore_index, dtype=torch.long, device=device
+        )
+        labels_cont = torch.full(
+            (B, L, F), fill_value=self.ignore_index, dtype=torch.long, device=device
+        )
 
         # Categorical labels: set to true id where masked (vectorized)
         labels_cat[mask_cat] = cats[mask_cat]
 
         # Continuous labels: batch all binning operations
         # Pre-compute all binned values at once
-        all_bins = torch.stack([
-            self.schema.cont_binners[name].bin(conts[..., f]) 
-            for f, name in enumerate(self.schema.cont_features)
-        ], dim=-1)  # (B, L, F)
-        
+        all_bins = torch.stack(
+            [
+                self.schema.cont_binners[name].bin(conts[..., f])
+                for f, name in enumerate(self.schema.cont_features)
+            ],
+            dim=-1,
+        )  # (B, L, F)
+
         # Apply masks vectorized
         labels_cont[mask_cont] = all_bins[mask_cont]
 
@@ -79,22 +96,22 @@ class MLMTabCollator(BaseTabCollator):
         cats_in[mask_cat] = self.cat_mask_id
 
         # Continuous: NaN sentinel for masked inputs (embedder will inject mask vector)
-        cont_in[mask_cont] = float('nan')
+        cont_in[mask_cont] = float("nan")
 
         return {
-            "cat": cats_in,                 # (B,L,C) long
-            "cont": cont_in,                # (B,L,F) float (NaN where masked)
-            "labels_cat": labels_cat,       # (B,L,C) long; ignore_index where not masked 
-            "labels_cont": labels_cont,     # (B,L,F) long; ignore_index where not masked
-            "downstream_label": labels,     # passthrough if you need it
+            "cat": cats_in,  # (B,L,C) long
+            "cont": cont_in,  # (B,L,F) float (NaN where masked)
+            "labels_cat": labels_cat,  # (B,L,C) long; ignore_index where not masked
+            "labels_cont": labels_cont,  # (B,L,F) long; ignore_index where not masked
+            "downstream_label": labels,  # passthrough if you need it
         }
 
 
 class ARTabCollator(BaseTabCollator):
     """Autoregressive collator (optimized with vectorized operations)."""
-    
+
     def __init__(
-        self, 
+        self,
         config: ModelConfig,
         schema: FieldSchema,
     ):
@@ -104,7 +121,7 @@ class ARTabCollator(BaseTabCollator):
     @torch.no_grad()
     def __call__(self, batch: list[dict[str, torch.Tensor]]) -> dict[str, torch.Tensor]:
         # Each item: {"cat": (L,C) long, "cont": (L,F) float, "label": ... optional}
-        cats  = torch.stack([b["cat"]  for b in batch], 0)  # (B,L,C)
+        cats = torch.stack([b["cat"] for b in batch], 0)  # (B,L,C)
         conts = torch.stack([b["cont"] for b in batch], 0)  # (B,L,F)
         labels = torch.stack([b["label"] for b in batch], 0)  # (B,L)
         B, L, C = cats.shape
@@ -115,36 +132,45 @@ class ARTabCollator(BaseTabCollator):
         # Inputs are unmasked sequences
         cats_in = cats  # (B, L, C) - full sequence
         cont_in = conts  # (B, L, F) - full sequence
-        
+
         # Labels are shifted left by 1 (predict row t+1 from rows <= t)
-        labels_cat = torch.full((B, L, C), fill_value=self.ignore_idx, dtype=torch.long, device=device)
-        labels_cont = torch.full((B, L, F), fill_value=self.ignore_idx, dtype=torch.long, device=device)
-        
+        labels_cat = torch.full(
+            (B, L, C), fill_value=self.ignore_idx, dtype=torch.long, device=device
+        )
+        labels_cont = torch.full(
+            (B, L, F), fill_value=self.ignore_idx, dtype=torch.long, device=device
+        )
+
         # Shift categorical labels: labels[:, :-1] = cats[:, 1:]
         labels_cat[:, :-1] = cats[:, 1:]
-        
+
         # Shift and bin continuous labels
         cont_shifted = conts[:, 1:]  # (B, L-1, F)
         # Bin all continuous values at once
-        all_bins = torch.stack([
-            self.schema.cont_binners[name].bin(cont_shifted[..., f])
-            for f, name in enumerate(self.schema.cont_features)
-        ], dim=-1)  # (B, L-1, F)
+        all_bins = torch.stack(
+            [
+                self.schema.cont_binners[name].bin(cont_shifted[..., f])
+                for f, name in enumerate(self.schema.cont_features)
+            ],
+            dim=-1,
+        )  # (B, L-1, F)
         labels_cont[:, :-1] = all_bins
-        
+
         # Last position has no target (ignore_idx already set)
-        
+
         return {
-            "cat": cats_in,                 # (B,L,C) long - input sequence
-            "cont": cont_in,                # (B,L,F) float - input sequence
-            "labels_cat": labels_cat,       # (B,L,C) long - shifted targets
-            "labels_cont": labels_cont,     # (B,L,F) long - shifted targets (binned)
-            "downstream_label": labels,     # (B,L) - passthrough if you need it
+            "cat": cats_in,  # (B,L,C) long - input sequence
+            "cont": cont_in,  # (B,L,F) float - input sequence
+            "labels_cat": labels_cat,  # (B,L,C) long - shifted targets
+            "labels_cont": labels_cont,  # (B,L,F) long - shifted targets (binned)
+            "downstream_label": labels,  # (B,L) - passthrough if you need it
         }
 
 
 # Keep the old function for backward compatibility
-def collate_fn_autoregressive(batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
+def collate_fn_autoregressive(
+    batch: List[Dict[str, torch.Tensor]]
+) -> Dict[str, torch.Tensor]:
     """Legacy autoregressive collator function."""
     cats = torch.stack([(b["cat"]) for b in batch], dim=0)
     conts = torch.stack([(b["cont"]) for b in batch], dim=0)
@@ -153,16 +179,93 @@ def collate_fn_autoregressive(batch: List[Dict[str, torch.Tensor]]) -> Dict[str,
 
 
 class FinetuneCollator(BaseTabCollator):
-    """Simple collator for finetuning - no masking."""
-    
+    """Finetuning collator with optional schema remapping.
+
+    If source_schema is provided and differs from target schema, categorical IDs
+    are remapped token-wise from source->target, and continuous values are re-normalized
+    from source scaler to target scaler: v_tgt = v_src * a + b.
+    """
+
+    def __init__(
+        self, schema: FieldSchema, source_schema: Optional[FieldSchema] = None
+    ):
+        super().__init__(schema)
+        self.target_schema = schema
+        self.source_schema = source_schema or schema
+
+        # Build categorical ID remap tables if schemas differ
+        self._needs_remap = self.source_schema is not self.target_schema
+        self.cat_remap: List[torch.Tensor] = []
+        if self._needs_remap:
+            for name in self.target_schema.cat_features:
+                src_enc = self.source_schema.cat_encoders[name]
+                tgt_enc = self.target_schema.cat_encoders[name]
+                table = torch.full(
+                    (src_enc.vocab_size,), fill_value=tgt_enc.unk_id, dtype=torch.long
+                )
+                # Specials map to same IDs
+                table[src_enc.pad_id] = tgt_enc.pad_id
+                table[src_enc.mask_id] = tgt_enc.mask_id
+                table[src_enc.unk_id] = tgt_enc.unk_id
+                # Map real tokens by string
+                for src_id, tok in enumerate(src_enc.inv.tolist()):
+                    if src_id < 3:
+                        continue
+                    tgt_id = tgt_enc.mapping.get(tok, tgt_enc.unk_id)
+                    table[src_id] = int(tgt_id)
+                self.cat_remap.append(table.clone().detach())
+        else:
+            # Identity remap tables
+            for name in self.target_schema.cat_features:
+                enc = self.target_schema.cat_encoders[name]
+                self.cat_remap.append(torch.arange(enc.vocab_size, dtype=torch.long))
+
+        # Continuous scaler conversion coefficients (a, b) per feature
+        self._needs_cont_convert = self.source_schema is not self.target_schema
+        if self._needs_cont_convert:
+            src_mean = torch.tensor(
+                self.source_schema.scaler.mean_, dtype=torch.float32
+            )
+            src_scale = torch.tensor(
+                self.source_schema.scaler.scale_, dtype=torch.float32
+            )
+            tgt_mean = torch.tensor(
+                self.target_schema.scaler.mean_, dtype=torch.float32
+            )
+            tgt_scale = torch.tensor(
+                self.target_schema.scaler.scale_, dtype=torch.float32
+            )
+            # v_tgt = (v_src*src_scale + src_mean - tgt_mean) / tgt_scale = v_src * (src_scale/tgt_scale) + (src_mean - tgt_mean)/tgt_scale
+            self.cont_a = src_scale / tgt_scale  # (F,)
+            self.cont_b = (src_mean - tgt_mean) / tgt_scale  # (F,)
+        else:
+            self.cont_a = None
+            self.cont_b = None
+
     @torch.no_grad()
     def __call__(self, batch: list[dict[str, torch.Tensor]]) -> dict[str, torch.Tensor]:
         cats = torch.stack([b["cat"] for b in batch], 0)  # (B, L, C)
         conts = torch.stack([b["cont"] for b in batch], 0)  # (B, L, F)
         labels = torch.stack([b["label"] for b in batch], 0)  # (B,)
-        
+
+        # Remap categorical IDs if needed
+        if self._needs_remap:
+            device = cats.device
+            for f_idx, table in enumerate(self.cat_remap):
+                cats[..., f_idx] = table.to(device)[cats[..., f_idx]]
+
+        # Convert continuous normalization if needed (preserve NaNs)
+        if (
+            self._needs_cont_convert
+            and self.cont_a is not None
+            and self.cont_b is not None
+        ):
+            a = self.cont_a.to(conts.device).view(1, 1, -1)
+            b = self.cont_b.to(conts.device).view(1, 1, -1)
+            conts = torch.where(torch.isnan(conts), conts, conts * a + b)
+
         return {
-            "cat": cats,                    # (B, L, C)
-            "cont": conts,                  # (B, L, F)
-            "downstream_label": labels,     # (B,) - fraud labels
+            "cat": cats,  # (B, L, C)
+            "cont": conts,  # (B, L, F)
+            "downstream_label": labels,  # (B,) - fraud labels
         }

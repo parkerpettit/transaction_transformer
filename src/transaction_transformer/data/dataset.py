@@ -7,6 +7,7 @@ from torch.utils.data import Dataset, DataLoader
 import torch.nn.functional as F
 import numpy as np
 from torch import Tensor
+
 logger = logging.getLogger(__name__)
 from pathlib import Path
 from tqdm.auto import tqdm
@@ -16,13 +17,14 @@ import torch
 from torch.utils.data import Dataset
 from typing import List, Dict
 
+
 class TxnDataset(Dataset):
     """Sliding window dataset"""
 
     def __init__(
         self,
-        df,                     # pandas.DataFrame
-        group_by: str,          # e.g. "user_id"
+        df,  # pandas.DataFrame
+        group_by: str,  # e.g. "user_id"
         schema: FieldSchema,
         window: int,
         stride: int = 1,
@@ -33,27 +35,39 @@ class TxnDataset(Dataset):
         #    - Categorical features: shape (num_rows, num_cat_features), dtype int64
         #    - Continuous features:  shape (num_rows, num_cont_features), dtype float32
         #    - Labels:               shape (num_rows,), dtype int64
-        cat_np   = df[schema.cat_features].to_numpy(dtype=np.int64)    # Extract categorical columns as numpy array
-        cont_np  = df[schema.cont_features].to_numpy(dtype=np.float32) # Extract continuous columns as numpy array
-        label_np = df["is_fraud"].to_numpy(dtype=np.int64)             # Extract label column as numpy array
+        cat_np = df[schema.cat_features].to_numpy(
+            dtype=np.int64
+        )  # Extract categorical columns as numpy array
+        cont_np = df[schema.cont_features].to_numpy(
+            dtype=np.float32
+        )  # Extract continuous columns as numpy array
+        label_np = df["is_fraud"].to_numpy(
+            dtype=np.int64
+        )  # Extract label column as numpy array
 
         # Convert numpy arrays to torch tensors and move to shared memory for fast access in DataLoader workers
-        self.cat_arr   = torch.from_numpy(cat_np).share_memory_()      # (num_rows, num_cat_features)
-        self.cont_arr  = torch.from_numpy(cont_np).share_memory_()     # (num_rows, num_cont_features)
-        self.labels    = torch.from_numpy(label_np).share_memory_()    # (num_rows,)
-        self.window    = window                                        # Sliding window size (number of rows per sample)
-        self.stride    = stride                                        # Step size for sliding window
+        self.cat_arr = torch.from_numpy(
+            cat_np
+        ).share_memory_()  # (num_rows, num_cat_features)
+        self.cont_arr = torch.from_numpy(
+            cont_np
+        ).share_memory_()  # (num_rows, num_cont_features)
+        self.labels = torch.from_numpy(label_np).share_memory_()  # (num_rows,)
+        self.window = window  # Sliding window size (number of rows per sample)
+        self.stride = stride  # Step size for sliding window
 
         # 2) Compute group offsets for each group (e.g., user_id)
         #    - group_sizes: number of rows for each group (e.g., number of transactions per user)
         #    - starts: starting row index for each group in the full dataset
         #    - self.group_offsets: list of (start_index, group_length) for each group with enough rows for a window
-        group_sizes = df.groupby(group_by, sort=False).size().to_numpy(dtype=np.int32)  # (num_groups,)
-        starts = np.concatenate([[0], group_sizes.cumsum()[:-1]])                       # (num_groups,)
+        group_sizes = (
+            df.groupby(group_by, sort=False).size().to_numpy(dtype=np.int32)
+        )  # (num_groups,)
+        starts = np.concatenate([[0], group_sizes.cumsum()[:-1]])  # (num_groups,)
         self.group_offsets = [
-            (int(starts[i]), int(group_sizes[i]))                                       # (start_row, group_length)
+            (int(starts[i]), int(group_sizes[i]))  # (start_row, group_length)
             for i in range(len(group_sizes))
-            if group_sizes[i] >= window                                                 # Only keep groups with enough rows
+            if group_sizes[i] >= window  # Only keep groups with enough rows
         ]
 
         # 3) Build a set of all valid (group_index, offset) pairs for sliding windows
@@ -66,14 +80,21 @@ class TxnDataset(Dataset):
             for off in range(0, length - window + 1, stride):
                 idx_set.add((gidx, off))
             # Optionally, for every fraud label in this group, ensure a window ending at that row is included
-            labels_grp = self.labels[base : base + length].numpy()  # Get labels for this group as numpy array
-            if include_all_fraud:  # If True, add extra windows ending at every fraud row
-                for pos in np.nonzero(labels_grp == 1)[0]:          # Find all positions where label == 1 (fraud)
-                    off = int(pos) - (window - 1)                   # Compute window start so window ends at pos
+            labels_grp = self.labels[
+                base : base + length
+            ].numpy()  # Get labels for this group as numpy array
+            if (
+                include_all_fraud
+            ):  # If True, add extra windows ending at every fraud row
+                for pos in np.nonzero(labels_grp == 1)[
+                    0
+                ]:  # Find all positions where label == 1 (fraud)
+                    off = int(pos) - (
+                        window - 1
+                    )  # Compute window start so window ends at pos
                     # Only add if window fits within group bounds
                     if 0 <= off <= length - window:
                         idx_set.add((gidx, off))
-        
 
         self.indices = torch.as_tensor(list(idx_set), dtype=torch.int64)
 
@@ -82,23 +103,15 @@ class TxnDataset(Dataset):
 
     def __getitem__(self, i):
         # no Python slicing of numpy, just index into shared‐memory torch.Tensors
-        gidx, off = int(self.indices[i,0]), int(self.indices[i,1])
-        base, _   = self.group_offsets[gidx]
-        st, en    = base + off, base + off + self.window
+        gidx, off = int(self.indices[i, 0]), int(self.indices[i, 1])
+        base, _ = self.group_offsets[gidx]
+        st, en = base + off, base + off + self.window
 
-        cat_win  = self.cat_arr[st:en]        # (window, C), Int64Tensor
-        cont_win = self.cont_arr[st:en]       # (window, F), FloatTensor
-        label    = self.labels[en-1]          # scalar Int64Tensor
+        cat_win = self.cat_arr[st:en]  # (window, C), Int64Tensor
+        cont_win = self.cont_arr[st:en]  # (window, F), FloatTensor
+        label = self.labels[en - 1]  # scalar Int64Tensor
 
         return {"cat": cat_win, "cont": cont_win, "label": label}
-
-
-
-
-
-
-
-
 
 
 # # embed.py
@@ -216,18 +229,3 @@ class TxnDataset(Dataset):
 #             "delta":            d,
 #             "label":            lbl,
 #         }
-
-    
-
-
-
-
-    
-
-
-
-
-
-    
-
-
