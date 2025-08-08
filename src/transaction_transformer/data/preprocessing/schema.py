@@ -122,8 +122,8 @@ def encode_df(df: pd.DataFrame, encoders: Dict[str, CatEncoder], cat_features: L
 # ============================================================================
 
 def get_scaler(df: pd.DataFrame, cont_features: List[str] = ["Amount"]) -> StandardScaler:
-    """Fit a StandardScaler on continuous features."""
-    return StandardScaler().fit(df[cont_features].to_numpy())
+    """Fit a StandardScaler on continuous features using DataFrame inputs to retain feature names."""
+    return StandardScaler().fit(df[cont_features])
 
 
 def normalize(df: pd.DataFrame, scaler: StandardScaler, cont_features: List[str] = ["Amount"]) -> pd.DataFrame:

@@ -13,7 +13,7 @@ model:
     ffn_mult: 4
     dropout: 0.1
     layer_norm_eps: 1.0e-6
-    norm_first: true
+    norm_first: false
   
   sequence_transformer:
     d_model: 1080
@@ -22,7 +22,7 @@ model:
     ffn_mult: 4
     dropout: 0.1
     layer_norm_eps: 1.0e-6
-    norm_first: true
+    norm_first: false
   
   classification:
     hidden_dim: 512
@@ -40,7 +40,7 @@ model:
   training:
     total_epochs: 1
     batch_size: 128 
-    learning_rate: 1.0e-4
+    learning_rate: 5.0e-5
     model_type: "ar"  # "mlm" or "ar"
     optimizer: "adamw"
     scheduler: "cosine"

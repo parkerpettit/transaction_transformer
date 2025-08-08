@@ -17,14 +17,9 @@ from typing import Dict, Any, Optional, Tuple
 import time
 import hashlib
 import json
-import torch
-from pathlib import Path
 from transaction_transformer.data.preprocessing import FieldSchema
 from transaction_transformer.config.config import ModelConfig
-import os
-import wandb
-from transaction_transformer.data.preprocessing import FieldSchema
-from transaction_transformer.config.config import ModelConfig
+
 
 class CheckpointManager:
     """Manages exportable weights and atomic resume checkpoints."""
@@ -122,7 +117,7 @@ class CheckpointManager:
         print(f"[CheckpointManager] Saved resume checkpoint -> {resume_path.name}")
 
         if wandb_run is not None:
-            artifact_name = f"{self.stage}-resume:{tag}"
+            artifact_name = f"{self.stage}-resume-{tag}"
             print(f"[CheckpointManager] Logging resume checkpoint to wandb as {artifact_name}")
             wandb_run.log_artifact(resume_path, type="model", name=artifact_name)
         return resume_path
