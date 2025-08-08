@@ -7,9 +7,9 @@ from transaction_transformer.utils import build_mlp
 from transaction_transformer.data.preprocessing.tokenizer import FieldSchema
 
 # -------------------------------------------------------------------------------------- #
-#  Feature prediction head                                                                 #
+#  Pretraining head                                                                       #
 # -------------------------------------------------------------------------------------- #
-class FeaturePredictionHead(nn.Module):
+class PretrainHead(nn.Module):
     """
     Attribute-specific heads. Takes (B, M) embeddings and returns logits per field: dict[field_name] -> (B, V_f).
     """

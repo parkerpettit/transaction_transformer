@@ -123,7 +123,7 @@ def main():
     
     # Load pretrained embedding model
     pretrained_checkpoint_path = Path(config.model.pretrain_checkpoint_dir) / f"{config.model.training.model_type}_pretrain_best_model.pt"
-    model.load_pretrained_embedding_model(str(pretrained_checkpoint_path))
+    model.load_pretrained_embedding_backbone(str(pretrained_checkpoint_path))
     
     device = torch.device(config.get_device())
     model.to(device)

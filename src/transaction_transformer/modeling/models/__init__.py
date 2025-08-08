@@ -4,28 +4,28 @@ Models module for transaction transformer.
 Contains model architectures and components.
 """
 
-from .predictor import FeaturePredictionModel
-from .embedder import TransformerEmbedder
+from .pretrain_model import PretrainingModel
+from .backbone import Backbone
 from .downstream import FraudDetectionModel
 from .components import (
     EmbeddingLayer,
     FieldTransformer,
     RowProjector,
     SequenceTransformer,
-    FeaturePredictionHead,
+    PretrainHead,
     ClassificationHead,
     RowExpander
 )
 
 __all__ = [
-    "FeaturePredictionModel",
-    "TransformerEmbedder",
+    "PretrainingModel",
+    "Backbone",
     "FraudDetectionModel",
     "EmbeddingLayer",
     "FieldTransformer",
     "RowProjector",
     "SequenceTransformer",
-    "FeaturePredictionHead",
+    "PretrainHead",
     "ClassificationHead",
     "RowExpander"
 ] 

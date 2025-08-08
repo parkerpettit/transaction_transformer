@@ -13,7 +13,7 @@ __email__ = "ppettit@mit.edu"
 from .data.preprocessing import FieldSchema, get_encoders, get_scaler, build_quantile_binner, normalize, encode_df, preprocess
 from .data import TxnDataset, MLMTabCollator, ARTabCollator, BaseTabCollator
 
-from .modeling.models import FeaturePredictionModel, TransformerEmbedder, FraudDetectionModel
+from .modeling.models import PretrainingModel, Backbone, FraudDetectionModel
 
 from .modeling.training import main
 
@@ -28,7 +28,7 @@ __all__ = [
     "TxnDataset", "MLMTabCollator", "ARTabCollator", "BaseTabCollator",
     
     # Models
-    "FeaturePredictionModel", "TransformerEmbedder", "FraudDetectionModel",
+    "PretrainingModel", "Backbone", "FraudDetectionModel",
     
     # Training
     "main",

@@ -1,9 +1,8 @@
 import torch.nn as nn
 from torch import Tensor, LongTensor
 from transaction_transformer.config.config import ModelConfig
-from transaction_transformer.modeling.models.embedder import TransformerEmbedder
+from transaction_transformer.modeling.models.backbone import Backbone
 from transaction_transformer.modeling.models.components import ClassificationHead
-from transaction_transformer.modeling.models.predictor import FeaturePredictionModel
 from transaction_transformer.data.preprocessing.tokenizer import FieldSchema
 from transaction_transformer.modeling.training.base.checkpoint_manager import CheckpointManager
 import torch
@@ -20,17 +19,17 @@ class FraudDetectionModel(nn.Module):
         self.schema = schema
         
         # Initialize the embedding model (this will be loaded with pretrained weights)
-        self.embedding_model = TransformerEmbedder(config, schema)
+        self.embedding_backbone = Backbone(config, schema)
         
         # Initialize the classification head
-        self.classification_head = ClassificationHead(config)
+        self.head = ClassificationHead(config)
         
         # Flag to control whether to freeze the embedding model
         self.freeze_embedding = config.freeze_embedding
     
-    def load_pretrained_embedding_model(self, checkpoint_path: str):
+    def load_pretrained_embedding_backbone(self, checkpoint_path: str):
         """
-        Load a pretrained FeaturePredictionModel and extract just the embedding part.
+        Load a pretrained backbone from a pretraining checkpoint.
         
         Args:
             checkpoint_path: Path to the pretrained model checkpoint
@@ -40,14 +39,14 @@ class FraudDetectionModel(nn.Module):
             raise FileNotFoundError(f"Checkpoint file not found: {checkpoint_path}")
         
         weights = torch.load(checkpoint_path, weights_only=False)
-        embedding_state_dict = {k: v for k, v in weights["model_state_dict"].items() if k.startswith("transaction_embedding_model")}
+        embedding_state_dict = {k[len("backbone."):]: v for k, v in weights["model_state_dict"].items() if k.startswith("backbone.")}
         print(embedding_state_dict.keys())
         # Load the weights into our embedding model
-        self.embedding_model.load_state_dict(embedding_state_dict, strict=False)
+        self.embedding_backbone.load_state_dict(embedding_state_dict)
         
         # Freeze the embedding model if specified
         if self.freeze_embedding:
-            for param in self.embedding_model.parameters():
+            for param in self.embedding_backbone.parameters():
                 param.requires_grad = False
         
         # Clean up the temporary model
@@ -66,8 +65,8 @@ class FraudDetectionModel(nn.Module):
             logits: (B,) logits for fraud classification
         """
         # Get embeddings from the pretrained embedding model
-        embeddings = self.embedding_model(cat, cont, row_type)  # (B, L, M)
+        embeddings = self.embedding_backbone(cat, cont, row_type)  # (B, L, M)
         last_embedding = embeddings[:, -1, :]  # (B, M)
         # Pass through the classification head
-        logits = self.classification_head(last_embedding)  # (B, 1) -> squeeze to (B,)
+        logits = self.head(last_embedding)  # (B, 1) -> squeeze to (B,)
         return logits.squeeze(-1)  # (B,)

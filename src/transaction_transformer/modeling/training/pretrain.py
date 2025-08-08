@@ -12,7 +12,7 @@ import wandb
 from pathlib import Path
 from tqdm import tqdm
 from transaction_transformer.data import TxnDataset
-from transaction_transformer.modeling.models import FeaturePredictionModel
+from transaction_transformer.modeling.models import PretrainingModel
 from transaction_transformer.modeling.training.trainers.pretrainer import Pretrainer
 
 from transaction_transformer.config.config import Config, ConfigManager
@@ -42,7 +42,7 @@ def create_datasets(
     return dataset
 
 def pretrain(
-    model: FeaturePredictionModel,
+    model: PretrainingModel,
     train_dataset: TxnDataset,
     val_dataset: TxnDataset,
     schema: FieldSchema,
@@ -125,7 +125,7 @@ def main():
     val_ds = create_datasets(val_df, config, schema)
     
     # Create model
-    model = FeaturePredictionModel(config=config.model, schema=schema)
+    model = PretrainingModel(config=config.model, schema=schema)
     device = torch.device(config.get_device())
     model.to(device)
     
@@ -133,14 +133,14 @@ def main():
     trainer = pretrain(model, train_ds, val_ds, schema, config, device)
     
     
-    # Check if checkpoint exists and load it
-    checkpoint_path = Path(config.model.pretrain_checkpoint_dir) / f"{config.model.training.model_type}_{config.model.mode}_best_model.pt"
-    if checkpoint_path.exists():
-        print(f"Loading checkpoint from {checkpoint_path}")
-        trainer.checkpoint_manager.load_checkpoint(str(checkpoint_path), trainer.model, trainer.optimizer, trainer.scheduler)
-        print(f"Resuming from epoch {trainer.current_epoch + 1}")
-    else:
-        print("No checkpoint found, starting from scratch")
+    # # Check if checkpoint exists and load it
+    # checkpoint_path = Path(config.model.pretrain_checkpoint_dir) / f"{config.model.training.model_type}_{config.model.mode}_best_model.pt"
+    # if checkpoint_path.exists():
+    #     print(f"Loading checkpoint from {checkpoint_path}")
+    #     trainer.checkpoint_manager.load_checkpoint(str(checkpoint_path), trainer.model, trainer.optimizer, trainer.scheduler)
+    #     print(f"Resuming from epoch {trainer.current_epoch + 1}")
+    # else:
+    #     print("No checkpoint found, starting from scratch")
     
     print("Starting training...")
     trainer.train(config.model.training.total_epochs)
