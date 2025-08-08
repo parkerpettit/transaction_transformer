@@ -4,7 +4,7 @@ from torch import Tensor
 from transaction_transformer.config.config import ModelConfig
 from transaction_transformer.modeling.models.components.projection import RowExpander
 from transaction_transformer.utils import build_mlp
-from transaction_transformer.data.preprocessing.tokenizer import FieldSchema
+from transaction_transformer.data.preprocessing.schema import FieldSchema
 
 # -------------------------------------------------------------------------------------- #
 #  Pretraining head                                                                       #

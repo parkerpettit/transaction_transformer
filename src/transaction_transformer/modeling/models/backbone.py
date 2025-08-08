@@ -7,7 +7,7 @@ from transaction_transformer.modeling.models.components import (
     RowProjector,
     SequenceTransformer,
 )
-from transaction_transformer.data.preprocessing.tokenizer import FieldSchema
+from transaction_transformer.data.preprocessing.schema import FieldSchema
 
 
 # -------------------------------------------------------------------------------------- #

@@ -1,6 +1,6 @@
 import torch.nn as nn
 from torch import Tensor, LongTensor
-from transaction_transformer.data.preprocessing.tokenizer import FieldSchema
+from transaction_transformer.data.preprocessing.schema import FieldSchema
 from transaction_transformer.config.config import ModelConfig
 from transaction_transformer.modeling.models.backbone import Backbone
 from transaction_transformer.modeling.models.components.heads import PretrainHead

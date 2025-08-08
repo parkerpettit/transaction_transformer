@@ -1,5 +1,5 @@
 """
-Tokenizer for transaction transformer.
+Schema and encoding utilities for transaction transformer.
 """
 
 from typing import Dict, Any, List, Optional, Tuple
@@ -167,5 +167,6 @@ def build_quantile_binner(series: pd.Series, num_bins: int = 100) -> NumBinner:
     edges_with_inf = np.concatenate([[-np.inf], edges, [np.inf]]).astype(np.float32)
     # 6. Convert to torch tensor
     return NumBinner(edges=torch.from_numpy(edges_with_inf).float())
+
 
 

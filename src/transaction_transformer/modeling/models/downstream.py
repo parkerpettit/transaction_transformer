@@ -3,7 +3,7 @@ from torch import Tensor, LongTensor
 from transaction_transformer.config.config import ModelConfig
 from transaction_transformer.modeling.models.backbone import Backbone
 from transaction_transformer.modeling.models.components import ClassificationHead
-from transaction_transformer.data.preprocessing.tokenizer import FieldSchema
+from transaction_transformer.data.preprocessing.schema import FieldSchema
 from transaction_transformer.modeling.training.base.checkpoint_manager import CheckpointManager
 import torch
 

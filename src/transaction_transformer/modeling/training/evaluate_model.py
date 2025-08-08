@@ -15,7 +15,7 @@ from transaction_transformer.modeling.models import FraudDetectionModel
 from transaction_transformer.modeling.training.trainers.finetune_trainer import FinetuneTrainer
 from transaction_transformer.modeling.training.trainers.evaluater import Evaluater
 from transaction_transformer.config.config import Config, ConfigManager
-from transaction_transformer.data.preprocessing.tokenizer import FieldSchema
+from transaction_transformer.data.preprocessing.schema import FieldSchema
 from transaction_transformer.data.collator import FinetuneCollator
 import pandas as pd
 

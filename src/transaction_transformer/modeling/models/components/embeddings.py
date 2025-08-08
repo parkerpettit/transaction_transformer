@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from typing import Dict, List
-from transaction_transformer.data.preprocessing.tokenizer import FieldSchema
+from transaction_transformer.data.preprocessing.schema import FieldSchema
 from transaction_transformer.config.config import ModelConfig
 
 # -------------------------------------------------------------------------------------- #

@@ -1,10 +1,10 @@
 """
 Preprocessing module for transaction transformer.
 
-Contains tokenization, encoding, and data preprocessing utilities.
+Contains schema, encoding, and data preprocessing utilities.
 """
 
-from .tokenizer import FieldSchema, get_encoders, get_scaler, build_quantile_binner, normalize, encode_df
+from .schema import FieldSchema, get_encoders, get_scaler, build_quantile_binner, normalize, encode_df
 from .preprocess import preprocess
 
 __all__ = [

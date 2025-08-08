@@ -16,7 +16,7 @@ from transaction_transformer.modeling.training.trainers.finetune_trainer import 
 from transaction_transformer.modeling.training.base.checkpoint_manager import CheckpointManager
 
 from transaction_transformer.config.config import Config, ConfigManager
-from transaction_transformer.data.preprocessing.tokenizer import FieldSchema
+from transaction_transformer.data.preprocessing.schema import FieldSchema
 from transaction_transformer.data.collator import FinetuneCollator
 import pandas as pd
 

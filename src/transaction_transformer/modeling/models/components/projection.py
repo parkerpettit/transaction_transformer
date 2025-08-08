@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 from transaction_transformer.config.config import ModelConfig
-from transaction_transformer.data.preprocessing.tokenizer import FieldSchema
+from transaction_transformer.data.preprocessing.schema import FieldSchema
 
         
 class RowProjector(nn.Module):

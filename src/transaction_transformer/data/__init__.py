@@ -6,7 +6,7 @@ Contains datasets, collators, and preprocessing utilities.
 
 from .dataset import TxnDataset
 from .collator import MLMTabCollator, ARTabCollator, BaseTabCollator, collate_fn_autoregressive
-from .preprocessing.tokenizer import FieldSchema, get_encoders, get_scaler, build_quantile_binner, normalize, encode_df
+from .preprocessing.schema import FieldSchema, get_encoders, get_scaler, build_quantile_binner, normalize, encode_df
 from .preprocessing.preprocess import preprocess
 
 __all__ = [

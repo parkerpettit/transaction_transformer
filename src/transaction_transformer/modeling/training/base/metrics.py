@@ -20,7 +20,7 @@ from sklearn.metrics import (
     auc,
 )
 import wandb
-from transaction_transformer.data.preprocessing.tokenizer import FieldSchema
+from transaction_transformer.data.preprocessing.schema import FieldSchema
 
 class MetricsTracker:
     """Tracks and manages training metrics with full wandb integration."""
