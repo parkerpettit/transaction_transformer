@@ -19,6 +19,8 @@ dependencies = [
     "wandb==0.21.1",
     "pyyaml==6.0.2",
     "tqdm==4.67.1",
+    "pyarrow==21.0.0",
+    "fastparquet=2024.11.0"
 ]
 
 [project.optional-dependencies]
@@ -34,3 +36,4 @@ pretrain = "transaction_transformer.modeling.training.pretrain:main"
 finetune = "transaction_transformer.modeling.training.finetune:main"
 evaluate_models = "transaction_transformer.modeling.training.evaluate_model:main"
 run_preprocessing = "transaction_transformer.data.preprocessing.run_preprocessing:main"
+upload_raw = "transaction_transformer.data.preprocessing.upload_raw_artifact:main"

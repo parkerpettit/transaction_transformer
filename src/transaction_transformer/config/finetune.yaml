@@ -49,11 +49,13 @@ model:
     device: "cuda"
     num_workers: 4
     positive_weight: 9.08  # Weight for positive (fraud) class. if 1.0, calculate from data
-    # Finetune startup / resume control
+    # Finetune startup / resume control (deprecated in favor of W&B artifacts)
     resume: false
-    resume_path: data/models/finetuned/finetune_best_model.pt # change this if resuming
+    resume_path: null
     from_scratch: false
-    pretrained_backbone_path: data/models/pretrained/mlm_pretrain_best_model.pt
+    # Prefer W&B artifact; if omitted, code will auto-discover the latest pretrain artifact in this project.
+    # You can still provide a local path to override.
+    pretrained_backbone_path: null
     #   Label statistics from full_processed.pt with include_all_fraud: true
     #   Positive samples: 20677
     #   Negative samples: 1704227
@@ -65,7 +67,11 @@ model:
     # Or use sqrt(negative_samples / positive_samples) for less aggressive weighting
   
   data:
-    preprocessed_path: "data/processed/full_processed.pt"
+    preprocessed_path: "data/processed/full_processed.pt"  # local override bundle (optional)
+    use_local_inputs: false
+    raw_csv_path: "data/raw/card_transaction.v1.csv"
+    raw_artifact_name: "raw-card-transactions-v1"
+    preprocessed_artifact_name: "preprocessed-card-v1"
     window: 10
     stride: 10
     num_bins: 100
@@ -79,7 +85,7 @@ model:
 metrics:
   run_name: finetune
   wandb: true
-  wandb_project: "fraud-detection"
+  wandb_project: "transaction-transformer"
   seed: 42
   deterministic: false
   log_gradients: false

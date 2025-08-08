@@ -42,7 +42,18 @@ class BaseTrainer(ABC):
         else:
             self.checkpoint_manager = CheckpointManager(self.config.model.finetune_checkpoint_dir, stage="finetune")
         self.metrics = MetricsTracker(ignore_index=self.config.model.data.ignore_idx)
-        self.metrics.wandb_run = wandb.init(project=config.metrics.wandb_project, name=config.metrics.run_name, config=config.to_dict(), tags=[config.model.training.model_type])
+        # Use an existing wandb run if initialized earlier (e.g., to declare artifact inputs)
+        # Otherwise, initialize a run here.
+        if config.metrics.wandb:
+            if wandb.run is None:
+                self.metrics.wandb_run = wandb.init(
+                    project=config.metrics.wandb_project,
+                    name=config.metrics.run_name,
+                    config=config.to_dict(),
+                    tags=[config.model.training.model_type],
+                )
+            else:
+                self.metrics.wandb_run = wandb.run
         self.metrics.class_names = self.schema.cat_features + self.schema.cont_features if config.model.mode == "pretrain" else ["non-fraud", "fraud"]
         self.patience = config.model.training.early_stopping_patience
         # Training state
@@ -96,51 +107,38 @@ class BaseTrainer(ABC):
             val_metrics = self.validate_epoch()
             self.metrics.end_epoch(self.current_epoch, "val")
             
-            # Save checkpoint if validation loss improves
-            if val_metrics.get("loss", float('inf')) < self.best_val_loss:
-                print(f"New best validation loss: {val_metrics.get('loss', 0):.4f}")
-                self.best_val_loss = val_metrics["loss"]
-                # Exportable weights (backbone/head) and atomic resume checkpoint
-                backbone = getattr(self.model, "backbone", None)
-                head = getattr(self.model, "head", None)
-                if backbone is not None and head is not None:
-                    self.checkpoint_manager.save_export_weights(backbone, head, self.schema, self.config.model, best=True)
-                    self.checkpoint_manager.save_resume_checkpoint(
-                        backbone=backbone,
-                        head=head,
-                        optimizer=self.optimizer,
-                        scheduler=self.scheduler,
-                        scaler=None,
-                        epoch=self.current_epoch,
-                        global_step=self.current_step,
-                        schema=self.schema,
-                        config=self.config.model,
-                        best=True,
-                        wandb_run=self.metrics.wandb_run,
-                    )
+            # Track best and log to W&B every epoch with artifact versioning
+            is_best = False
+            current_val_loss = val_metrics.get("loss", float('inf'))
+            if current_val_loss < self.best_val_loss:
+                print(f"New best validation loss: {current_val_loss:.4f}")
+                self.best_val_loss = current_val_loss
+                is_best = True
                 patience_counter = 0
             else:
                 patience_counter += 1
                 if patience_counter >= self.patience:
                     print(f"Early stopping triggered after {epoch + 1} epochs.")
                     break
-            # Always save last resume checkpoint (overwrite)
+
+            # Save local exports (overwrite) and log a W&B artifact version for this epoch
             backbone = getattr(self.model, "backbone", None)
             head = getattr(self.model, "head", None)
             if backbone is not None and head is not None:
-                self.checkpoint_manager.save_resume_checkpoint(
-                    backbone=backbone,
-                    head=head,
-                    optimizer=self.optimizer,
-                    scheduler=self.scheduler,
-                    scaler=None,
-                    epoch=self.current_epoch,
-                    global_step=self.current_step,
-                    schema=self.schema,
-                    config=self.config.model,
-                    best=False,
-                    wandb_run=None,
-                )
+                try:
+                    self.checkpoint_manager.save_and_log_epoch(
+                        backbone=backbone,
+                        head=head,
+                        schema=self.schema,
+                        config=self.config.model,
+                        epoch=self.current_epoch,
+                        global_step=self.current_step,
+                        val_metrics=val_metrics,
+                        wandb_run=self.metrics.wandb_run,
+                        is_best=is_best,
+                    )
+                except Exception as e:
+                    print(f"[Trainer] Warning: failed to save/log epoch artifact: {e}")
             
             # Print progress
             print(f"Epoch {epoch+1}/{num_epochs}")

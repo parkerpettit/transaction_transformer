@@ -133,29 +133,10 @@ python -m transaction_transformer.modeling.training.finetune \
     --model.pretrain_checkpoint_dir data/models/pretrained
 ```
 
-### 3. Model Evaluation
+### Evaluation
 
-**During Training**: Evaluation happens automatically during training via the trainer and metrics system. The trainer tracks validation metrics and saves the best model based on validation loss.
-
-**Final Model Testing**: For comprehensive evaluation of your final finetuned model(s):
-
-```bash
-# After installing with pip install -e, you can use the direct command:
-
-# Simple approach - edit the YAML file and run:
-# Edit src/transaction_transformer/config/finetune.yaml to set finetune_checkpoint_dir
-evaluate_models
-
-# Or use CLI arguments to override settings:
-evaluate_models --config src/transaction_transformer/config/finetune.yaml --model.finetune_checkpoint_dir data/models/finetuned
-
-# Or use the full module path:
-python -m transaction_transformer.modeling.training.evaluate_models \
-    --config src/transaction_transformer/config/finetune.yaml \
-    --model.finetune_checkpoint_dir data/models/finetuned
-```
-
-This script evaluates all saved model checkpoints and provides detailed metrics for fraud detection performance.
+Evaluation happens during training (validation metrics per epoch) and is logged to W&B.
+To select a model, use the W&B artifact UI to compare `pretrain-<runid>` or `finetune-<runid>` versions and download the desired alias (e.g., `:best`).
 
 ## Project Structure
 

@@ -24,23 +24,17 @@ def create_datasets(
     df: pd.DataFrame,
     config: Config,
     schema: FieldSchema,
-    validation: bool = False
+    validation: bool = False,
 ) -> TxnDataset:
-    """Create train and validation datasets."""
-    
-    # Create datasets
-    dataset = TxnDataset(
+    """Create dataset with config-driven parameters."""
+    return TxnDataset(
         df=df,
         group_by=config.model.data.group_by,
         schema=schema,
         window=config.model.data.window,
         stride=config.model.data.stride,
-        include_all_fraud=config.model.data.include_all_fraud if not validation else False
+        include_all_fraud=config.model.data.include_all_fraud if not validation else False,
     )
-    
-   
-    
-    return dataset
 
 def finetune(
     model: FraudDetectionModel,
@@ -106,7 +100,7 @@ def finetune(
     return trainer
 
 def main():
-    """Main pretraining function."""
+    """Main finetuning function."""
     
     # Load configuration
     config_manager = ConfigManager(config_path="finetune.yaml")
@@ -114,29 +108,88 @@ def main():
     print("Configuration loaded")
     
     
-    # Load preprocessed data
-    train_df, val_df, test_df, schema = torch.load(config.model.data.preprocessed_path, weights_only=False)
-    train_ds = create_datasets(train_df, config, schema, validation=False)
-    val_ds = create_datasets(val_df, config, schema, validation=True)
+    # Init wandb for artifact usage
+    if config.metrics.wandb and wandb.run is None:
+        wandb.init(project=config.metrics.wandb_project, name=config.metrics.run_name, config=config.to_dict(), job_type="debug-finetune")
+
+    # Load preprocessed data: artifact-first to data/processed, fallback to local
+    processed_dir = Path(config.model.data.preprocessed_path).parent
+    processed_dir.mkdir(parents=True, exist_ok=True)
+    if not config.model.data.use_local_inputs and config.model.data.preprocessed_artifact_name:
+        ref = f"{wandb.run.entity}/{wandb.run.project}/{config.model.data.preprocessed_artifact_name}:latest" if wandb.run else f"{config.model.data.preprocessed_artifact_name}:latest"
+        pre_art = wandb.run.use_artifact(ref)  # type: ignore[arg-type]
+        pre_dir = Path(pre_art.download(root=str(processed_dir)))
+        train_df = pd.read_parquet(pre_dir / "train.parquet")
+        val_df = pd.read_parquet(pre_dir / "val.parquet")
+        test_df = pd.read_parquet(pre_dir / "test.parquet")
+        ft_schema_obj = torch.load(pre_dir / "schema.pt", map_location="cpu", weights_only=False)
+    else:
+        # Local fallback
+        torch_bundle = Path(config.model.data.preprocessed_path)
+        if torch_bundle.exists():
+            train_df, val_df, test_df, ft_schema_obj = torch.load(str(torch_bundle), weights_only=False)
+        else:
+            train_df = pd.read_parquet(processed_dir / "train.parquet")
+            val_df = pd.read_parquet(processed_dir / "val.parquet")
+            test_df = pd.read_parquet(processed_dir / "test.parquet")
+            ft_schema_obj = torch.load(processed_dir / "schema.pt", map_location="cpu", weights_only=False)
+    train_ds = create_datasets(train_df, config, ft_schema_obj, validation=False)
+    val_ds = create_datasets(val_df, config, ft_schema_obj, validation=True)
     
     # Create model
-    model = FraudDetectionModel(config=config.model, schema=schema)
+    model = FraudDetectionModel(config=config.model, schema=ft_schema_obj)
 
     # Finetune init logic
     if config.model.training.resume and config.model.training.resume_path:
-        print(f"Resuming finetuning from {config.model.training.resume_path}")
-        # Load both backbone and head plus optimizer/scheduler
-        # trainer is not yet created; we'll load optimizer and scheduler after creation
-        resume_path = str(config.model.training.resume_path)
+        print("Resume from local checkpoint is no longer supported; please use W&B artifacts.")
     else:
         if not config.model.training.from_scratch:
-            if not config.model.training.pretrained_backbone_path:
-                raise FileNotFoundError("pretrained_backbone_path must be set for finetuning unless from_scratch is true")
-            print(f"Initializing finetuning from pretrained backbone: {config.model.training.pretrained_backbone_path}")
-            # Load backbone exportable weights
-            # For now, we reuse the CheckpointManager API for consistency
             cm = CheckpointManager(config.model.finetune_checkpoint_dir, stage="finetune")
-            cm.load_export_backbone(config.model.training.pretrained_backbone_path, model.backbone)
+            loaded = False
+            # 1) Explicit artifact ref provided
+            if config.model.training.pretrained_backbone_artifact:
+                print(f"Initializing finetuning from W&B artifact: {config.model.training.pretrained_backbone_artifact}")
+                cm.load_backbone_from_artifact(
+                    config.model.training.pretrained_backbone_artifact,
+                    model.backbone,
+                    wandb_run=wandb.run if config.metrics.wandb else None,
+                )
+                loaded = True
+            # 2) Auto-discover latest pretrain artifact in current project
+            if not loaded and wandb.run is not None and config.metrics.wandb:
+                entity = wandb.run.entity
+                project = wandb.run.project
+                auto_ref = CheckpointManager.find_latest_stage_artifact_ref(entity, project, stage="pretrain", prefer_alias="best")
+                if auto_ref is None:
+                    auto_ref = CheckpointManager.find_latest_stage_artifact_ref(entity, project, stage="pretrain", prefer_alias="latest")
+                if auto_ref:
+                    print(f"Auto-discovered pretrained backbone artifact: {auto_ref}")
+                    cm.load_backbone_from_artifact(
+                        auto_ref,
+                        model.backbone,
+                        wandb_run=wandb.run if config.metrics.wandb else None,
+                    )
+                    loaded = True
+            # 3) Local explicit path (if it exists)
+            if not loaded and config.model.training.pretrained_backbone_path:
+                candidate = Path(config.model.training.pretrained_backbone_path)
+                if candidate.exists():
+                    print(f"Initializing finetuning from local pretrained backbone: {candidate}")
+                    cm.load_export_backbone(str(candidate), model.backbone)
+                    loaded = True
+            # 4) Local default fallback: data/models/pretrained/backbone_best.pt
+            if not loaded:
+                default_local = Path(config.model.pretrain_checkpoint_dir) / "backbone_best.pt"
+                if default_local.exists():
+                    print(f"Initializing finetuning from local default backbone: {default_local}")
+                    cm.load_export_backbone(str(default_local), model.backbone)
+                    loaded = True
+            if not loaded:
+                raise FileNotFoundError(
+                    "Could not find pretrained backbone. Set training.pretrained_backbone_artifact, "
+                    "or ensure a local export exists at training.pretrained_backbone_path or at "
+                    f"{Path(config.model.pretrain_checkpoint_dir) / 'backbone_best.pt'}, or set from_scratch=true."
+                )
         else:
             print("Finetuning from scratch (backbone randomly initialized)")
     
@@ -145,19 +198,9 @@ def main():
     
     
     # Select training model_type based on config
-    trainer = finetune(model, train_ds, val_ds, schema, config, device)
+    trainer = finetune(model, train_ds, val_ds, ft_schema_obj, config, device)
 
-    # If we are resuming, now that optimizer/scheduler exist, load them
-    if config.model.training.resume and config.model.training.resume_path:
-        cm = CheckpointManager(config.model.finetune_checkpoint_dir, stage="finetune")
-        cm.load_resume_checkpoint(
-            resume_path,
-            backbone=model.backbone,
-            head=model.head,
-            optimizer=trainer.optimizer,
-            scheduler=trainer.scheduler,
-            scaler=None,
-        )
+    # Resume via local checkpoints removed in favor of artifact-based lineage
     
     
     # Check if checkpoint exists and load it
@@ -175,6 +218,9 @@ def main():
 
     print(f"Training for {config.model.training.total_epochs} epochs")
     trainer.train(config.model.training.total_epochs)
+    # Close run explicitly to ensure uploads complete
+    if wandb.run is not None:
+        wandb.finish()
 
 
 if __name__ == "__main__":

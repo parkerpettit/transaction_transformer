@@ -56,6 +56,9 @@ class FinetuneTrainer(BaseTrainer):
         ) # (B,)
         return logits, labels
 
+    def compute_loss(self, logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        """Compute loss for a batch."""
+        return self.loss_fn(logits, labels.float()) # (B,)
 
     def train_epoch(self) -> Dict[str, float]:
         """Train for one epoch."""

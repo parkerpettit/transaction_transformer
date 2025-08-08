@@ -86,13 +86,20 @@ class TrainingConfig:
     from_scratch: bool = False
     # Path to pretrained backbone export to initialize finetuning
     pretrained_backbone_path: Optional[str] = None
+    # Optional W&B artifact ref for pretrained backbone (e.g., "entity/project/pretrain-<runid>:best")
+    pretrained_backbone_artifact: Optional[str] = None
 
 
 @dataclass
 class DataConfig:
     """Configuration for data loading and preprocessing."""
     # Data paths
-    preprocessed_path: str = "data/preprocessed/legit_processed.pt"
+    preprocessed_path: str = "data/processed/legit_processed.pt"
+    raw_csv_path: str = "data/raw/card_transaction.v1.csv"  # local fallback/raw upload source
+    # Artifact-first behavior (download ':latest' each run unless overridden)
+    use_local_inputs: bool = False
+    raw_artifact_name: Optional[str] = "raw-card-transactions-v1"
+    preprocessed_artifact_name: Optional[str] = "preprocessed-card-v1"
     
     # Sequence parameters
     window: int = 10

@@ -10,6 +10,12 @@ from transaction_transformer.data.preprocessing import (
     encode_df,
 )
 from typing import Tuple, Dict, Any, cast
+import wandb
+import json
+import io
+import torch
+import time
+from transaction_transformer.config.config import ConfigManager
 
 # NOTE: This script intentionally fits encoders, scalers, and binners
 # on legit TRAIN only to avoid any form of data leakage. We build ONE schema
@@ -29,8 +35,29 @@ def main():
     # ---------------------------------------------------------------------
     #                      INITIAL CSV PRE-PROCESSING
     # ---------------------------------------------------------------------
-    print("[1] Running initial CSV preprocessing ...")
-    full_train_raw, full_val_raw, full_test_raw = preprocess(Path("data/raw/card_transaction.v1.csv"))
+    # Load config to determine artifact behavior
+    cfg = ConfigManager(config_path="pretrain.yaml").config
+    if cfg.metrics.wandb and wandb.run is None:
+        wandb.init(project=cfg.metrics.wandb_project, name="preprocess", config=cfg.to_dict(), job_type="preprocess")
+
+    processed_dir = Path(cfg.model.data.preprocessed_path).parent
+    processed_dir.mkdir(parents=True, exist_ok=True)
+
+    # Artifact-first by default: consume raw dataset from W&B
+    if not cfg.model.data.use_local_inputs and cfg.model.data.raw_artifact_name:
+        ref = f"{wandb.run.entity}/{wandb.run.project}/{cfg.model.data.raw_artifact_name}:latest" if wandb.run else f"{cfg.model.data.raw_artifact_name}:latest"
+        print(f"[1] Loading raw dataset from artifact: {ref}")
+        raw_art = wandb.run.use_artifact(ref)  # type: ignore[arg-type]
+        # Download into the directory specified by config (parent of raw_csv_path)
+        raw_root = Path(cfg.model.data.raw_csv_path).parent
+        raw_root.mkdir(parents=True, exist_ok=True)
+        raw_dir = Path(raw_art.download(root=str(raw_root)))
+        # Expect the CSV inside the artifact as 'card_transaction.v1.csv'
+        raw_csv = raw_dir / Path(cfg.model.data.raw_csv_path).name
+        full_train_raw, full_val_raw, full_test_raw = preprocess(raw_csv)
+    else:
+        print("[1] Running initial CSV preprocessing from local CSV ...")
+        full_train_raw, full_val_raw, full_test_raw = preprocess(Path(cfg.model.data.raw_csv_path))
 
     print("[2] Creating legit-only splits ...")
     legit_train_raw: pd.DataFrame = cast(pd.DataFrame, full_train_raw.loc[full_train_raw["is_fraud"] == 0].copy().reset_index(drop=True))
@@ -82,19 +109,85 @@ def main():
     # ---------------------------------------------------------------------
     #                                SAVE
     # ---------------------------------------------------------------------
-    print("\n[INFO] Saving processed datasets and single schema ...")
-    import torch
-    # Ensure output directory exists
-    Path("data/processed").mkdir(parents=True, exist_ok=True)
-    torch.save(
-        (full_train_df, full_val_df, full_test_df, schema),
-        "data/processed/full_processed.pt",
+    print("\n[INFO] Logging preprocessed datasets and schema to W&B artifact ...")
+    run = wandb.run or wandb.init(project=cfg.metrics.wandb_project, name="preprocess", config=cfg.to_dict(), job_type="preprocess")
+    processed = wandb.Artifact(
+        name="preprocessed-card-v1",
+        type="dataset",
+        description="Preprocessed splits, schema, encoders, binners, scaler for card v1",
+        metadata={
+            "job_type": "preprocess",
+            "created_at": time.time(),
+        },
     )
-    torch.save(
-        (legit_train_df, legit_val_df, legit_test_df, schema),
-        "data/processed/legit_processed.pt",
-    )
-    print("Done.")
+    # Write FULL dataframes as parquet directly into the artifact (binary mode)
+    with processed.new_file("train.parquet", mode="wb") as f:
+        full_train_df.to_parquet(f, index=False)
+    with processed.new_file("val.parquet", mode="wb") as f:
+        full_val_df.to_parquet(f, index=False)
+    with processed.new_file("test.parquet", mode="wb") as f:
+        full_test_df.to_parquet(f, index=False)
+
+    # Also write LEGIT-only splits for pretraining convenience
+    with processed.new_file("legit_train.parquet", mode="wb") as f:
+        legit_train_df.to_parquet(f, index=False)
+    with processed.new_file("legit_val.parquet", mode="wb") as f:
+        legit_val_df.to_parquet(f, index=False)
+    with processed.new_file("legit_test.parquet", mode="wb") as f:
+        legit_test_df.to_parquet(f, index=False)
+
+    # Save schema and helpers
+    with processed.new_file("schema.pt", mode="wb") as f:
+        buf = io.BytesIO()
+        torch.save(schema, buf)
+        f.write(buf.getvalue())
+
+    # Encoders/binners/scaler saved separately for direct consumption if needed
+    with processed.new_file("encoders.pt", mode="wb") as f:
+        buf = io.BytesIO()
+        torch.save(schema.cat_encoders, buf)
+        f.write(buf.getvalue())
+    with processed.new_file("binners.pt", mode="wb") as f:
+        buf = io.BytesIO()
+        torch.save(schema.cont_binners, buf)
+        f.write(buf.getvalue())
+    with processed.new_file("scaler.pt", mode="wb") as f:
+        buf = io.BytesIO()
+        torch.save(schema.scaler, buf)
+        f.write(buf.getvalue())
+
+    # Add preprocessing metadata
+    preprocess_meta = {
+        "seed": cfg.metrics.seed,
+        "window": cfg.model.data.window,
+        "stride": cfg.model.data.stride,
+        "group_by": cfg.model.data.group_by,
+        "cat_features": schema.cat_features,
+        "cont_features": schema.cont_features,
+        "time_cat": getattr(schema, "time_cat", []),
+        "special_ids": {
+            "pad": cfg.model.data.padding_idx,
+            "mask": cfg.model.data.mask_idx,
+            "unk": cfg.model.data.unk_idx,
+        },
+    }
+    with processed.new_file("preprocess_meta.json", mode="w") as f:
+        f.write(json.dumps(preprocess_meta, indent=2))
+
+    # Also copy files to data/processed for local overrides
+    import shutil
+    for src_name in [
+        "train.parquet", "val.parquet", "test.parquet",
+        "legit_train.parquet", "legit_val.parquet", "legit_test.parquet",
+        "schema.pt", "encoders.pt", "binners.pt", "scaler.pt", "preprocess_meta.json",
+    ]:
+        src_path = Path(run.dir) / "artifacts"  # not reliable; copy from temp created via new_file is non-trivial
+    # We rely on artifact download in subsequent steps to populate local cache when needed.
+
+    run.log_artifact(processed, aliases=["latest", f"run-{run.id}"])
+    print("Logged preprocessed-card-v1 artifact with aliases [latest, run-<id>]")
+    # Finish run explicitly to flush uploads and close the run
+    wandb.finish()
 
     # ---------------------------------------------------------------------
     #                         VERIFY DISTRIBUTIONS

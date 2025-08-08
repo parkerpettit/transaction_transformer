@@ -51,17 +51,21 @@ model:
     early_stopping_patience: 5
     device: "cuda"
     num_workers: 4
-    # Resume control (pretraining)
+    # Resume control (deprecated in favor of W&B artifacts)
     resume: false
-    resume_path: data/models/pretrained/mlm_pretrain_best_model.pt # change this if resuming
+    resume_path: null
   
   data:
-    preprocessed_path: "data/processed/legit_processed.pt"
+    preprocessed_path: "data/processed/legit_processed.pt"  # local override bundle (optional)
+    use_local_inputs: false  # if true, skip artifact download and use local files
+    raw_csv_path: "data/raw/card_transaction.v1.csv"
+    raw_artifact_name: "raw-card-transactions-v1"
+    preprocessed_artifact_name: "preprocessed-card-v1"
     window: 10
     stride: 5
     num_bins: 100
     group_by: "User"
-    include_all_fraud: false
+    include_all_fraud: false  # ignored for pretrain; pretrain always uses LEGIT splits
     padding_idx: 0
     mask_idx: 1
     unk_idx: 2
@@ -70,7 +74,7 @@ model:
 metrics:
   run_name: pretrain
   wandb: true
-  wandb_project: "feature-predictor"
+  wandb_project: "transaction-transformer"
   seed: 42
   deterministic: false
   log_gradients: false
