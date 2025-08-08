@@ -54,9 +54,8 @@ class NumBinner:
         """
         x_contiguous = x.contiguous()
         # torch.bucketize behaves like np.digitize when right=False (default)
-        idx = torch.bucketize(x_contiguous, self.edges, right=False)
-        # idx is in [0, num_edges]; clamp so that values equal to the last edge
-        # get mapped to the last valid bin and negatives stay in the first bin.
+        # If edges include -inf and +inf, subtract 1 to get bin indices in [0, num_bins-1]
+        idx = torch.bucketize(x_contiguous, self.edges, right=False) - 1
         idx = torch.clamp(idx, 0, self.num_bins - 1)
         return idx
 
@@ -164,7 +163,9 @@ def build_quantile_binner(series: pd.Series, num_bins: int = 100) -> NumBinner:
     if len(edges) < 2:
         edges = np.array([series.min(), series.max()])
     
-    # 5. Convert to torch tensor
-    return NumBinner(edges=torch.from_numpy(edges).float())
+    # 5. Add sentinel -inf and +inf edges for robustness
+    edges_with_inf = np.concatenate([[-np.inf], edges, [np.inf]]).astype(np.float32)
+    # 6. Convert to torch tensor
+    return NumBinner(edges=torch.from_numpy(edges_with_inf).float())
 
 
