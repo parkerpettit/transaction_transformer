@@ -18,8 +18,8 @@ class FraudDetectionModel(nn.Module):
         self.config = config
         self.schema = schema
         
-        # Initialize the embedding model (this will be loaded with pretrained weights)
-        self.embedding_backbone = Backbone(config, schema)
+        # Initialize the backbone (this will be loaded with pretrained weights)
+        self.backbone = Backbone(config, schema)
         
         # Initialize the classification head
         self.head = ClassificationHead(config)
@@ -41,12 +41,12 @@ class FraudDetectionModel(nn.Module):
         weights = torch.load(checkpoint_path, weights_only=False)
         embedding_state_dict = {k[len("backbone."):]: v for k, v in weights["model_state_dict"].items() if k.startswith("backbone.")}
         print(embedding_state_dict.keys())
-        # Load the weights into our embedding model
-        self.embedding_backbone.load_state_dict(embedding_state_dict)
+        # Load the weights into our backbone
+        self.backbone.load_state_dict(embedding_state_dict)
         
         # Freeze the embedding model if specified
         if self.freeze_embedding:
-            for param in self.embedding_backbone.parameters():
+            for param in self.backbone.parameters():
                 param.requires_grad = False
         
         # Clean up the temporary model
@@ -65,7 +65,7 @@ class FraudDetectionModel(nn.Module):
             logits: (B,) logits for fraud classification
         """
         # Get embeddings from the pretrained embedding model
-        embeddings = self.embedding_backbone(cat, cont, row_type)  # (B, L, M)
+        embeddings = self.backbone(cat, cont, row_type)  # (B, L, M)
         last_embedding = embeddings[:, -1, :]  # (B, M)
         # Pass through the classification head
         logits = self.head(last_embedding)  # (B, 1) -> squeeze to (B,)

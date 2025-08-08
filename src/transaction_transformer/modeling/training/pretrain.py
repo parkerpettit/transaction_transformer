@@ -131,6 +131,19 @@ def main():
     
     # Select training model_type based on config
     trainer = pretrain(model, train_ds, val_ds, schema, config, device)
+
+    # Resume logic (pretrain stage): only if explicitly requested
+    if config.model.training.resume and config.model.training.resume_path:
+        print(f"Resuming pretraining from {config.model.training.resume_path}")
+        # The model must expose backbone/head attributes
+        trainer.checkpoint_manager.load_resume_checkpoint(
+            config.model.training.resume_path,
+            backbone=model.backbone,
+            head=model.head,
+            optimizer=trainer.optimizer,
+            scheduler=trainer.scheduler,
+            scaler=None,
+        )
     
     
     # # Check if checkpoint exists and load it

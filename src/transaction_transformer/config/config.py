@@ -79,6 +79,14 @@ class TrainingConfig:
     # Class imbalance handling
     positive_weight: float = 1.0  # Weight for positive class in binary classification
 
+    # Checkpoint/resume behavior
+    resume: bool = False
+    resume_path: Optional[str] = None
+    # Finetune-only testing path to skip pretrained backbone
+    from_scratch: bool = False
+    # Path to pretrained backbone export to initialize finetuning
+    pretrained_backbone_path: Optional[str] = None
+
 
 @dataclass
 class DataConfig:

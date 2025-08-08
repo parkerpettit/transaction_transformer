@@ -2,8 +2,6 @@ model:
   mode: "finetune"
   row_types: 1
   freeze_embedding: false
-  emb_dropout: 0.1
-  clf_dropout: 0.1
   pretrain_checkpoint_dir: "data/models/pretrained"
   finetune_checkpoint_dir: "data/models/finetuned"
   log_dir: "logs"
@@ -28,7 +26,7 @@ model:
   
   classification:
     hidden_dim: 512
-    depth: 2  # Number of layers in the MLP. 0 is a linear layer
+    depth: 2  # Number of hidden layers in the MLP. 0 is a linear layer
     dropout: 0.1
     output_dim: 1
 
@@ -40,13 +38,10 @@ model:
     mask_token_init_std: 0.02
   
   training:
-    total_epochs: 10
+    total_epochs: 1
     batch_size: 128 
     learning_rate: 1.0e-4
     model_type: "ar"  # "mlm" or "ar"
-    p_field: 0.15
-    p_row: 0.10
-    joint_timestamp_masking: true
     optimizer: "adamw"
     scheduler: "cosine"
     mixed_precision: false
@@ -54,6 +49,11 @@ model:
     device: "cuda"
     num_workers: 4
     positive_weight: 9.08  # Weight for positive (fraud) class. if 1.0, calculate from data
+    # Finetune startup / resume control
+    resume: false
+    resume_path: data/models/finetuned/finetune_best_model.pt # change this if resuming
+    from_scratch: false
+    pretrained_backbone_path: data/models/pretrained/mlm_pretrain_best_model.pt
     #   Label statistics from full_processed.pt with include_all_fraud: true
     #   Positive samples: 20677
     #   Negative samples: 1704227

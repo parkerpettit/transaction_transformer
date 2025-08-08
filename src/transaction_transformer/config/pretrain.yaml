@@ -2,8 +2,6 @@ model:
   mode: "pretrain"
   row_types: 1
   freeze_embedding: false
-  emb_dropout: 0.1
-  clf_dropout: 0.1
   pretrain_checkpoint_dir: "data/models/pretrained"
   finetune_checkpoint_dir: "data/models/finetuned"
   log_dir: "logs"
@@ -40,7 +38,7 @@ model:
 
   
   training:
-    total_epochs: 5
+    total_epochs: 1
     batch_size: 64
     learning_rate: 1.0e-4
     model_type: "mlm"  # "mlm" or "ar"
@@ -53,6 +51,9 @@ model:
     early_stopping_patience: 5
     device: "cuda"
     num_workers: 4
+    # Resume control (pretraining)
+    resume: false
+    resume_path: data/models/pretrained/mlm_pretrain_best_model.pt # change this if resuming
   
   data:
     preprocessed_path: "data/processed/legit_processed.pt"

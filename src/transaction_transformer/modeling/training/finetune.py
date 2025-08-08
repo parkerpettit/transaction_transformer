@@ -13,6 +13,7 @@ from tqdm import tqdm
 from transaction_transformer.data import TxnDataset
 from transaction_transformer.modeling.models import FraudDetectionModel
 from transaction_transformer.modeling.training.trainers.finetune_trainer import FinetuneTrainer
+from transaction_transformer.modeling.training.base.checkpoint_manager import CheckpointManager
 
 from transaction_transformer.config.config import Config, ConfigManager
 from transaction_transformer.data.preprocessing.tokenizer import FieldSchema
@@ -120,10 +121,24 @@ def main():
     
     # Create model
     model = FraudDetectionModel(config=config.model, schema=schema)
-    
-    # Load pretrained embedding model
-    pretrained_checkpoint_path = Path(config.model.pretrain_checkpoint_dir) / f"{config.model.training.model_type}_pretrain_best_model.pt"
-    model.load_pretrained_embedding_backbone(str(pretrained_checkpoint_path))
+
+    # Finetune init logic
+    if config.model.training.resume and config.model.training.resume_path:
+        print(f"Resuming finetuning from {config.model.training.resume_path}")
+        # Load both backbone and head plus optimizer/scheduler
+        # trainer is not yet created; we'll load optimizer and scheduler after creation
+        resume_path = str(config.model.training.resume_path)
+    else:
+        if not config.model.training.from_scratch:
+            if not config.model.training.pretrained_backbone_path:
+                raise FileNotFoundError("pretrained_backbone_path must be set for finetuning unless from_scratch is true")
+            print(f"Initializing finetuning from pretrained backbone: {config.model.training.pretrained_backbone_path}")
+            # Load backbone exportable weights
+            # For now, we reuse the CheckpointManager API for consistency
+            cm = CheckpointManager(config.model.finetune_checkpoint_dir, stage="finetune")
+            cm.load_export_backbone(config.model.training.pretrained_backbone_path, model.backbone)
+        else:
+            print("Finetuning from scratch (backbone randomly initialized)")
     
     device = torch.device(config.get_device())
     model.to(device)
@@ -131,6 +146,18 @@ def main():
     
     # Select training model_type based on config
     trainer = finetune(model, train_ds, val_ds, schema, config, device)
+
+    # If we are resuming, now that optimizer/scheduler exist, load them
+    if config.model.training.resume and config.model.training.resume_path:
+        cm = CheckpointManager(config.model.finetune_checkpoint_dir, stage="finetune")
+        cm.load_resume_checkpoint(
+            resume_path,
+            backbone=model.backbone,
+            head=model.head,
+            optimizer=trainer.optimizer,
+            scheduler=trainer.scheduler,
+            scaler=None,
+        )
     
     
     # Check if checkpoint exists and load it

@@ -63,6 +63,8 @@ class FinetuneTrainer(BaseTrainer):
         total_loss = 0.0
         batch_idx = 0
         for batch in self.train_bar:
+            if batch_idx == 50:
+                break
             logits, labels = self.forward_pass(batch)
             loss = self.loss_fn(logits, labels.float()) # (B,)
 
@@ -92,6 +94,8 @@ class FinetuneTrainer(BaseTrainer):
         total_loss = 0.0
         batch_idx = 0
         for batch in self.val_bar:
+            if batch_idx == 50:
+                break
             logits, labels = self.forward_pass(batch)
             loss = self.val_loss_fn(logits, labels.float()) # (B,)
             self.metrics.update_binary_classification(logits, labels)
