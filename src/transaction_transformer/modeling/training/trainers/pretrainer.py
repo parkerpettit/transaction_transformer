@@ -3,6 +3,7 @@ MLM training trainer for transaction transformer.
 """
 
 from typing import Dict, Any, Optional, Tuple
+import logging
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -76,10 +77,10 @@ class Pretrainer(BaseTrainer):
                     num_bins=V,
                     epsilon=0.1,
                     neighborhood=5
-                )
+                ).to(dtype=logits_flat.dtype)
                 
                 # CrossEntropyLoss with soft targets needs the full target tensor
-                full_soft_targets = torch.zeros_like(logits_flat)
+                full_soft_targets = torch.zeros_like(logits_flat, dtype=logits_flat.dtype)
                 full_soft_targets[mask] = soft_targets
 
                 total_loss += self.cont_loss_fn(logits_flat, full_soft_targets)
@@ -149,42 +150,72 @@ class Pretrainer(BaseTrainer):
 
     
     def train_epoch(self) -> Dict[str, float]:
-            """Train for one epoch."""
-            self.model.train()
-            total_loss = 0.0  # accumulate as python float to avoid autograd graph growth
-            num_batches = 0
-            batch_idx = 0
-            for batch in self.train_bar:
-                if batch_idx == 50:
-                    break
+        """Train for one epoch."""
+        self.model.train()
+        total_loss = 0.0  # accumulate as python float to avoid autograd graph growth
+        num_batches = 0
+        batch_idx = 0
+        max_batches = getattr(self.config.model.training, "max_batches_per_epoch", None)
+        logger = logging.getLogger(__name__)
+        for batch in self.train_bar:
+            if isinstance(max_batches, int) and max_batches > 0 and batch_idx >= max_batches:
+                break
+
+            # Forward and loss with AMP autocast
+            autocast_ctx = torch.autocast(device_type=self.device.type, dtype=self.autocast_dtype, enabled=self.amp_enabled)
+            with autocast_ctx:
                 logits, labels_cat, labels_cont = self.forward_pass(batch)
+                if batch_idx == 0:
+                    try:
+                        logger.debug(
+                            "First train batch shapes | cat=%s cont=%s labels_cat=%s labels_cont=%s",
+                            tuple(batch["cat"].shape), tuple(batch["cont"].shape), tuple(labels_cat.shape), tuple(labels_cont.shape)
+                        )
+                        ignore_idx = self.config.model.data.ignore_idx
+                        valid_cat = int((labels_cat != ignore_idx).sum().item())
+                        valid_cont = int((labels_cont != ignore_idx).sum().item())
+                        logger.debug("First train batch valid targets | cat=%d cont=%d", valid_cat, valid_cont)
+                    except Exception:
+                        logger.debug("Failed to log first-batch train stats", exc_info=True)
                 loss = self.compute_loss(logits, labels_cat, labels_cont)
-                # Backward pass
-                self.optimizer.zero_grad()
+
+            # Backward pass with GradScaler when fp16
+            self.optimizer.zero_grad(set_to_none=True)
+            if self.grad_scaler.is_enabled():
+                self.grad_scaler.scale(loss).backward()
+                # Unscale before optional gradient clipping
+                if self.grad_clip_norm is not None and self.grad_clip_norm > 0:
+                    self.grad_scaler.unscale_(self.optimizer)
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=self.grad_clip_norm)
+                self.grad_scaler.step(self.optimizer)
+                self.grad_scaler.update()
+            else:
                 loss.backward()
+                if self.grad_clip_norm is not None and self.grad_clip_norm > 0:
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=self.grad_clip_norm)
                 self.optimizer.step()
-                
-                if self.scheduler:
-                    self.scheduler.step()
-                
-                total_loss += loss.item()
-                num_batches += 1
-                if batch_idx % 10 == 0 and self.metrics.wandb_run:
-                    self.metrics.wandb_run.log({
-                        "train_loss": loss.item(),
-                        "learning_rate": self.optimizer.param_groups[0]['lr'],
-                        "epoch": self.metrics.current_epoch,
-                    }, commit=True)
-                
-                batch_idx += 1
-                if batch_idx % 10 == 0:
-                    self.train_bar.set_postfix({
-                            "Loss":  f"{loss.item():.4f}",
-                        })
-            
-            return {"loss": total_loss / num_batches,
+
+            if self.scheduler:
+                self.scheduler.step()
+
+            total_loss += loss.item()
+            num_batches += 1
+            if batch_idx % 10 == 0 and self.metrics.wandb_run:
+                self.metrics.wandb_run.log({
+                    "epoch": self.metrics.current_epoch,
+                    "train_loss": loss.item(),
                     "learning_rate": self.optimizer.param_groups[0]['lr'],
-            }
+                }, commit=True)
+
+            batch_idx += 1
+            if batch_idx % 10 == 0:
+                self.train_bar.set_postfix({
+                        "Loss":  f"{loss.item():.4f}",
+                    })
+
+        return {"loss": total_loss / num_batches,
+                "learning_rate": self.optimizer.param_groups[0]['lr'],
+        }
     @torch.no_grad()
     def validate_epoch(self) -> Dict[str, float]:
         """Validate for one epoch."""
@@ -193,11 +224,15 @@ class Pretrainer(BaseTrainer):
         num_batches = 0
         batch_idx = 0
         with torch.no_grad():
+            max_batches = getattr(self.config.model.training, "max_batches_per_epoch", None)
+            logger = logging.getLogger(__name__)
             for batch in self.val_bar:
-                if batch_idx == 50:
+                if isinstance(max_batches, int) and max_batches > 0 and batch_idx >= max_batches:
                     break
-                logits, labels_cat, labels_cont = self.forward_pass(batch)
-                loss = self.compute_loss(logits, labels_cat, labels_cont)
+                # Autocast in eval too
+                with torch.autocast(device_type=self.device.type, dtype=self.autocast_dtype, enabled=self.amp_enabled):
+                    logits, labels_cat, labels_cont = self.forward_pass(batch)
+                    loss = self.compute_loss(logits, labels_cat, labels_cont)
 
                 targets = {}
                 for i, feature_name in enumerate(self.schema.cat_features):
@@ -215,12 +250,25 @@ class Pretrainer(BaseTrainer):
                 })
 
                 if batch_idx == 0:
+                    try:
+                        logger.debug(
+                            "First val batch shapes | cat=%s cont=%s labels_cat=%s labels_cont=%s",
+                            tuple(batch["cat"].shape), tuple(batch["cont"].shape), tuple(labels_cat.shape), tuple(labels_cont.shape)
+                        )
+                        ignore_idx = self.config.model.data.ignore_idx
+                        valid_cat = int((labels_cat != ignore_idx).sum().item())
+                        valid_cont = int((labels_cont != ignore_idx).sum().item())
+                        logger.debug("First val batch valid targets | cat=%d cont=%d", valid_cat, valid_cont)
+                    except Exception:
+                        logger.debug("Failed to log first-batch val stats", exc_info=True)
                     self.metrics.print_sample_predictions(logits, targets, self.schema)
                 if batch_idx % 5 == 0 and self.metrics.wandb_run:
                     self.metrics.wandb_run.log({
-                        "val_loss": loss.item(),
                         "epoch": self.metrics.current_epoch,
+                        "val_loss": loss.item(),
                     }, commit=True)
                 batch_idx += 1
 
+        if num_batches == 0:
+            return {"loss": float("nan")}
         return {"loss": total_loss / num_batches}

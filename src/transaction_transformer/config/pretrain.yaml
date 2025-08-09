@@ -47,8 +47,11 @@ model:
     joint_timestamp_masking: true
     optimizer: "adamw"
     scheduler: "cosine"
-    mixed_precision: false
+    mixed_precision: true
+    amp_dtype: bf16
+    grad_clip_norm: 1.0
     early_stopping_patience: 5
+    max_batches_per_epoch: null  # null for full epoch; integer for debug cap
     device: "cuda"
     num_workers: 4
     # Resume control (deprecated in favor of W&B artifacts)
@@ -75,6 +78,7 @@ metrics:
   run_name: pretrain
   wandb: true
   wandb_project: "transaction-transformer"
+  wandb_entity: null
   seed: 42
   deterministic: false
   log_gradients: false

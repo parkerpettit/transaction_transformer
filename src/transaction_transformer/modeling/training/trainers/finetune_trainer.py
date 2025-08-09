@@ -3,6 +3,7 @@ Finetuning trainer for transaction transformer.
 """
 
 from typing import Dict, Any, Optional, Tuple
+import logging
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -65,15 +66,41 @@ class FinetuneTrainer(BaseTrainer):
         self.model.train()
         total_loss = 0.0
         batch_idx = 0
+        max_batches = getattr(self.config.model.training, "max_batches_per_epoch", None)
+        logger = logging.getLogger(__name__)
         for batch in self.train_bar:
-            if batch_idx == 50:
+            if isinstance(max_batches, int) and max_batches > 0 and batch_idx >= max_batches:
                 break
-            logits, labels = self.forward_pass(batch)
-            loss = self.loss_fn(logits, labels.float()) # (B,)
 
-            self.optimizer.zero_grad()
-            loss.backward()
-            self.optimizer.step()
+            # Forward + loss with AMP autocast
+            with torch.autocast(device_type=self.device.type, dtype=self.autocast_dtype, enabled=self.amp_enabled):
+                logits, labels = self.forward_pass(batch)
+                loss = self.loss_fn(logits, labels.float()) # (B,)
+            if batch_idx == 0:
+                try:
+                    probs = torch.sigmoid(logits).detach().cpu()
+                    logger.debug(
+                        "First train batch | shapes: cat=%s cont=%s labels=%s | prob_stats: min=%.4f med=%.4f max=%.4f",
+                        tuple(batch["cat"].shape), tuple(batch["cont"].shape), tuple(labels.shape),
+                        float(probs.min()), float(probs.median()), float(probs.max())
+                    )
+                except Exception:
+                    logger.debug("Failed to log first-batch train stats (finetune)", exc_info=True)
+
+            # Backward with GradScaler when fp16
+            self.optimizer.zero_grad(set_to_none=True)
+            if self.grad_scaler.is_enabled():
+                self.grad_scaler.scale(loss).backward()
+                if self.grad_clip_norm is not None and self.grad_clip_norm > 0:
+                    self.grad_scaler.unscale_(self.optimizer)
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=self.grad_clip_norm)
+                self.grad_scaler.step(self.optimizer)
+                self.grad_scaler.update()
+            else:
+                loss.backward()
+                if self.grad_clip_norm is not None and self.grad_clip_norm > 0:
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=self.grad_clip_norm)
+                self.optimizer.step()
             if self.scheduler is not None:
                 self.scheduler.step()
         
@@ -84,9 +111,9 @@ class FinetuneTrainer(BaseTrainer):
             
             if batch_idx % 5 == 0 and self.metrics.wandb_run:
                     self.metrics.wandb_run.log({
+                        "epoch": self.metrics.current_epoch,
                         "train_loss": loss.item(),
                         "learning_rate": self.optimizer.param_groups[0]['lr'],
-                        "epoch": self.metrics.current_epoch,
                     }, commit=True)
             batch_idx += 1
         return {"loss": total_loss / len(self.train_loader)}
@@ -96,11 +123,25 @@ class FinetuneTrainer(BaseTrainer):
         self.model.eval()
         total_loss = 0.0
         batch_idx = 0
+        max_batches = getattr(self.config.model.training, "max_batches_per_epoch", None)
+        logger = logging.getLogger(__name__)
         for batch in self.val_bar:
-            if batch_idx == 50:
+            if isinstance(max_batches, int) and max_batches > 0 and batch_idx >= max_batches:
                 break
-            logits, labels = self.forward_pass(batch)
-            loss = self.val_loss_fn(logits, labels.float()) # (B,)
+            # Autocast for eval forward
+            with torch.autocast(device_type=self.device.type, dtype=self.autocast_dtype, enabled=self.amp_enabled):
+                logits, labels = self.forward_pass(batch)
+                loss = self.val_loss_fn(logits, labels.float()) # (B,)
+            if batch_idx == 0:
+                try:
+                    probs = torch.sigmoid(logits).detach().cpu()
+                    logger.debug(
+                        "First val batch | shapes: cat=%s cont=%s labels=%s | prob_stats: min=%.4f med=%.4f max=%.4f",
+                        tuple(batch["cat"].shape), tuple(batch["cont"].shape), tuple(labels.shape),
+                        float(probs.min()), float(probs.median()), float(probs.max())
+                    )
+                except Exception:
+                    logger.debug("Failed to log first-batch val stats (finetune)", exc_info=True)
             self.metrics.update_binary_classification(logits, labels)
             total_loss += loss.item()
             self.val_bar.set_postfix({
@@ -109,8 +150,8 @@ class FinetuneTrainer(BaseTrainer):
             batch_idx += 1
             if batch_idx % 5 == 0 and self.metrics.wandb_run:
                     self.metrics.wandb_run.log({
-                        "val_loss": loss.item(),
                         "epoch": self.metrics.current_epoch,
+                        "val_loss": loss.item(),
                     }, commit=True)
 
         return {"loss": total_loss / len(self.val_loader)}

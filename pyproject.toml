@@ -12,15 +12,15 @@ authors = [
 readme = "README.md"
 requires-python = ">=3.8"
 dependencies = [
-    "torch==2.8.0+cu129",
-    "pandas==2.3.1",
-    "numpy==2.3.2",
-    "scikit-learn==1.7.1",
-    "wandb==0.21.1",
-    "pyyaml==6.0.2",
-    "tqdm==4.67.1",
-    "pyarrow==21.0.0",
-    "fastparquet=2024.11.0"
+    "torch~=2.8.0",
+    "pandas~=2.3.1",
+    "numpy~=2.3.2",
+    "scikit-learn~=1.7.1",
+    "wandb~=0.21.1",
+    "pyyaml~=6.0.2",
+    "tqdm~=4.67.1",
+    "pyarrow~=21.0.0",
+    "fastparquet~=2024.11.0"
 ]
 
 [project.optional-dependencies]

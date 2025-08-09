@@ -68,6 +68,10 @@ class TrainingConfig:
     optimizer: str = "adamw"  # "adamw", "adam", "sgd"
     scheduler: str = "cosine"  # "cosine", "linear", "none"
     mixed_precision: bool = False
+    # AMP dtype: "bf16" (recommended on Ampere+), or "fp16" (uses GradScaler)
+    amp_dtype: str = "bf16"
+    # Optional gradient clipping (L2 norm). None disables clipping
+    grad_clip_norm: Optional[float] = None
     
     # Checkpointing and logging
     early_stopping_patience: int = 5
@@ -78,6 +82,9 @@ class TrainingConfig:
     
     # Class imbalance handling
     positive_weight: float = 1.0  # Weight for positive class in binary classification
+
+    # Optional debug cap for faster iteration
+    max_batches_per_epoch: Optional[int] = None
 
     # Checkpoint/resume behavior
     resume: bool = False

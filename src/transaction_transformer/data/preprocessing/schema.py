@@ -3,6 +3,7 @@ Schema and encoding utilities for transaction transformer.
 """
 
 from typing import Dict, Any, List, Optional, Tuple
+import logging
 from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
@@ -90,12 +91,14 @@ def get_encoders(df: pd.DataFrame, cat_features: List[str]) -> Dict[str, CatEnco
     Fit encoders on the provided dataframe.
     Real categories will be assigned ids [3 .. 3+K-1].
     """
+    logger = logging.getLogger(__name__)
     encoders: Dict[str, CatEncoder] = {}
     for c in cat_features:
         cats = pd.Series(df[c], copy=False).astype("category").cat.categories.tolist()
         mapping = {tok: FIRST_REAL_ID + idx for idx, tok in enumerate(cats)}
         inv = np.array(["[PAD]", "[MASK]", "[UNK]", *cats], dtype=object)
         encoders[c] = CatEncoder(mapping=mapping, inv=inv)
+        logger.debug("Fitted encoder | feature=%s | vocab_size=%d", c, len(inv))
     return encoders
 
 
@@ -123,7 +126,17 @@ def encode_df(df: pd.DataFrame, encoders: Dict[str, CatEncoder], cat_features: L
 
 def get_scaler(df: pd.DataFrame, cont_features: List[str] = ["Amount"]) -> StandardScaler:
     """Fit a StandardScaler on continuous features using DataFrame inputs to retain feature names."""
-    return StandardScaler().fit(df[cont_features])
+    logger = logging.getLogger(__name__)
+    scaler = StandardScaler().fit(df[cont_features])
+    try:
+        means = getattr(scaler, "mean_", None)
+        stds = getattr(scaler, "scale_", None)
+        if means is not None and stds is not None:
+            for name, m, s in zip(cont_features, means, stds):
+                logger.debug("Scaler stats | feature=%s | mean=%.4f std=%.4f", name, float(m), float(s))
+    except Exception:
+        logger.debug("Failed to log scaler stats", exc_info=True)
+    return scaler
 
 
 def normalize(df: pd.DataFrame, scaler: StandardScaler, cont_features: List[str] = ["Amount"]) -> pd.DataFrame:
@@ -166,7 +179,10 @@ def build_quantile_binner(series: pd.Series, num_bins: int = 100) -> NumBinner:
     # 5. Add sentinel -inf and +inf edges for robustness
     edges_with_inf = np.concatenate([[-np.inf], edges, [np.inf]]).astype(np.float32)
     # 6. Convert to torch tensor
-    return NumBinner(edges=torch.from_numpy(edges_with_inf).float())
+    logger = logging.getLogger(__name__)
+    nb = NumBinner(edges=torch.from_numpy(edges_with_inf).float())
+    logger.debug("Built quantile binner | num_bins=%d | edges0=%.4f edges_last=%.4f", nb.num_bins, float(nb.edges[0]), float(nb.edges[-1]))
+    return nb
 
 
 

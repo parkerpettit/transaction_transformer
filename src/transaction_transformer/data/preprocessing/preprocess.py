@@ -1,5 +1,5 @@
 import pathlib
-from typing import List, Tuple
+from typing import List, Tuple, cast
 import pandas as pd
 import numpy as np      
 
@@ -18,6 +18,10 @@ def preprocess(
     """Efficient vectorized preprocessing for transaction data."""
     # 1) Read only needed columns
     df = pd.read_csv(file)
+    # 1a) Strip leading/trailing whitespace from all string/object columns to normalize tokens
+    obj_cols = df.select_dtypes(include=["object"]).columns.tolist()
+    for c in obj_cols:
+        df[c] = df[c].astype("string").str.strip()
 
     # 2) Generate binary fraud flag
     df["is_fraud"] = df["Is Fraud?"].str.lower().map({"yes": 1, "no": 0}).astype(np.int8)
@@ -27,21 +31,35 @@ def preprocess(
     # 3) Parse time, extract hour, drop minutes
     df["Time"] = pd.to_datetime(df["Time"], format="%H:%M", errors="coerce")
     df["Hour"] = df["Time"].dt.hour.astype("category")
+    # Absolute timestamp in seconds from epoch (normalized later as continuous)
+    # NaT will convert to NaN after division
+    # ts_ns = df["Time"].astype("int64", copy=False)
+    # df["Timestamp"] = (ts_ns / 1e9).astype("float32")
     df.drop(columns=["Time"], inplace=True)
 
-    df["Errors?"] = df["Errors?"].fillna("No Error")
-    df["Zip"] = df["Zip"].fillna("Online")
+    # 4) Ensure categorical geo fields have appropriate dtypes
+    # Zip originates as float64. Convert to pandas nullable integer -> string to avoid FutureWarning.
+    zip_num = cast(pd.Series, pd.to_numeric(df["Zip"], errors="coerce")).astype("Int64")
+    df["Zip"] = cast(pd.Series, zip_num).astype(pd.StringDtype())
+    df["Merchant City"] = df["Merchant City"].astype("string")
+    df["Merchant State"] = df["Merchant State"].astype("string")
+    df["Errors?"] = df["Errors?"].astype("string")
 
-    # strip dollar sign from amounts
+    # 5) Fill common categorical nulls
+    df["Errors?"] = df["Errors?"].fillna("No Error")
+
+    # 6) Normalize online channel: when Merchant City is ONLINE, set missing Zip/State to ONLINE too
+    mask_online_city = df["Merchant City"].str.upper().eq("ONLINE")
+    df.loc[mask_online_city & df["Zip"].isna(), "Zip"] = "ONLINE"
+    df.loc[mask_online_city & df["Merchant State"].isna(), "Merchant State"] = "ONLINE"
+
+    # Convert continuous features
+    # For Amount: remove currency symbols/commas even if dtype is pandas StringDtype
     for c in cont_features:
-        if df[c].dtype == object:
-            df[c] = (
-                df[c]
-                .str.replace(r"[\$,]", "", regex=True)
-                .astype("float32")
-            )
-        else:
-            df[c] = pd.to_numeric(df[c], downcast="float")
+        s = df[c].astype("string")
+        s = s.str.replace(r"[\$,]", "", regex=True)
+        df[c] = pd.to_numeric(s, errors="coerce")
+        df[c] = df[c].astype("float32")
 
     # Sort chronologically
     df.sort_values(

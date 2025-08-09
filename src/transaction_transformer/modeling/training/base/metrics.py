@@ -74,8 +74,9 @@ class MetricsTracker:
         labels: torch.Tensor, 
     ) -> None:
         """Update binary classification metrics."""
-        probs = torch.sigmoid(logits).cpu().numpy()
-        labels_np = labels.cpu().numpy()
+        # Ensure stable dtype for NumPy under AMP (bf16/fp16) by casting to float32
+        probs = torch.sigmoid(logits).to(dtype=torch.float32).cpu().numpy()
+        labels_np = labels.to(dtype=torch.int64).cpu().numpy()
         
         self.all_probs.extend(probs.tolist())
         self.all_labels.extend(labels_np.tolist())
@@ -214,6 +215,7 @@ class MetricsTracker:
         # Store metrics for each threshold
         metrics = {}
 
+        rows_for_table = []
         for target_fpr, threshold in zip(target_fprs, thresholds):
             preds_np = (probs_np >= threshold).astype(np.int8)
 
@@ -241,6 +243,18 @@ class MetricsTracker:
 
             self._log_confusion_matrix(labels_np, preds_np, target_fpr)
 
+            rows_for_table.append([
+                int(self.current_epoch),
+                float(target_fpr),
+                float(threshold),
+                float(precision),
+                float(recall),
+                float(f1),
+                float(accuracy),
+                float(class_acc[0]),
+                float(class_acc[1]),
+            ])
+
         # AUC metrics (not threshold-dependent)
         try:
             roc_auc = roc_auc_score(labels_np, probs_np)
@@ -256,6 +270,50 @@ class MetricsTracker:
         metrics["pr_auc"] = float(pr_auc)
         self.metrics.update(metrics)
         self._log_roc_pr_curves(labels_np, probs_np)
+
+        # Log raw prediction probabilities and labels for post-hoc thresholding
+        if self.wandb_run:
+            pred_rows = [[int(self.current_epoch), int(i), float(p), int(l)] for i, (p, l) in enumerate(zip(probs_np, labels_np))]
+            pred_tbl = wandb.Table(columns=["epoch", "index", "prob", "label"], data=pred_rows)
+            self.wandb_run.log({
+                "epoch": self.current_epoch,
+                "val_predictions_table": pred_tbl,
+            })
+
+            # Precision/Recall/F1 vs threshold curve (dense sampling)
+            thresholds_dense = np.linspace(0.0, 1.0, 201)
+            prf_rows = []
+            prec_list, rec_list, f1_list = [], [], []
+            for th in thresholds_dense:
+                preds = (probs_np >= th).astype(np.int8)
+                precision, recall, f1, _ = precision_recall_fscore_support(labels_np, preds, average="binary", zero_division="warn")
+                prf_rows.append([int(self.current_epoch), float(th), float(precision), float(recall), float(f1)])
+                prec_list.append(float(precision))
+                rec_list.append(float(recall))
+                f1_list.append(float(f1))
+            prf_tbl = wandb.Table(columns=["epoch", "threshold", "precision", "recall", "f1"], data=prf_rows)
+            self.wandb_run.log({
+                "epoch": self.current_epoch,
+                "val_prf_curve_table": prf_tbl,
+                "val_prf_curve": wandb.plot.line_series(
+                    xs=thresholds_dense.tolist(),
+                    ys=[prec_list, rec_list, f1_list],
+                    keys=["precision", "recall", "f1"],
+                    title="Validation Precision/Recall/F1 vs Threshold",
+                    xname="threshold",
+                ),
+            })
+
+        # Log a compact threshold metrics table per epoch
+        if self.wandb_run and rows_for_table:
+            tbl = wandb.Table(columns=[
+                "epoch", "target_fpr_percent", "threshold", "precision", "recall", "f1",
+                "overall_accuracy", "non_fraud_acc", "fraud_acc",
+            ], data=rows_for_table)
+            self.wandb_run.log({
+                "epoch": self.current_epoch,
+                "val_threshold_metrics_table": tbl,
+            })
         return metrics
     
     def _compute_transaction_metrics(self) -> None:
@@ -277,6 +335,18 @@ class MetricsTracker:
                 metrics["avg_acc"] = avg_acc
         
         self.metrics.update(metrics)
+        # Log a per-feature accuracy table
+        if self.wandb_run and self.feature_total:
+            rows = []
+            for feature_name in self.feature_total.keys():
+                total_positions = self.feature_total[feature_name]
+                acc = self.feature_correct[feature_name] / total_positions if total_positions > 0 else 0.0
+                rows.append([int(self.current_epoch), feature_name, float(acc), int(total_positions)])
+            tbl = wandb.Table(columns=["epoch", "feature", "accuracy", "valid_positions"], data=rows)
+            self.wandb_run.log({
+                "epoch": self.current_epoch,
+                "transaction_feature_accuracy_table": tbl,
+            })
     
     def _log_confusion_matrix(self, labels_np: np.ndarray, preds_np: np.ndarray, target_fpr: float) -> None:
         """Log confusion matrix to wandb for a specific threshold (target FPR)."""
@@ -303,9 +373,10 @@ class MetricsTracker:
 
         # Create unique key for each confusion matrix based on target FPR with % symbol
         cm_key = f"confusion_matrix_fpr_{target_fpr:.3f}%".replace(".", "_").replace("%", "pct")
-        self.wandb_run.log({cm_key: wandb.Image(fig),
-                            "epoch": self.current_epoch,
-                            })
+        self.wandb_run.log({
+            "epoch": self.current_epoch,
+            cm_key: wandb.Image(fig),
+        })
         plt.close(fig)
 
 
@@ -347,14 +418,15 @@ class MetricsTracker:
             f"Precision: {precision:.3f} | Recall: {recall:.3f} | F1: {f1:.3f}"
         ) # Place the metrics text below the confusion matrix
         fig_05.text(0.45, 0.0, metrics_text, ha="center", va="bottom", fontsize=10)
-        self.wandb_run.log({cm_key_05: wandb.Image(fig_05),
-                            "roc_curve": roc_plot,
-                            "pr_curve": pr_plot,
-                            "val_precision@0.5_threshold": float(precision),
-                            "val_recall@0.5_threshold": float(recall),
-                            "val_f1@0.5_threshold": float(f1),
-                            "epoch": self.current_epoch,
-                            })
+        self.wandb_run.log({
+            "epoch": self.current_epoch,
+            cm_key_05: wandb.Image(fig_05),
+            "roc_curve": roc_plot,
+            "pr_curve": pr_plot,
+            "val_precision@0.5_threshold": float(precision),
+            "val_recall@0.5_threshold": float(recall),
+            "val_f1@0.5_threshold": float(f1),
+        })
         plt.close("all")
     
     
@@ -387,26 +459,22 @@ class MetricsTracker:
         plt.xticks(rotation=45, ha='right')
         plt.tight_layout()
         
-        self.wandb_run.log({f"{model_type}_feature_accuracy": wandb.Image(fig),
-                            "epoch": self.current_epoch,
-                            })
+        self.wandb_run.log({
+            "epoch": self.current_epoch,
+            f"{model_type}_feature_accuracy": wandb.Image(fig),
+        })
         plt.close(fig)
     
     def end_epoch(self, epoch: int, model_type: str = "train") -> None:
         """End epoch and return averaged metrics."""
         
-        # Compute metrics based on what we've been tracking
-        if self.all_labels:  # Binary classification
-            print(f"Computing and logging binary metrics for {model_type} epoch {epoch + 1}")
-            self._compute_binary_metrics()
-            print(f"Binary metrics computed and logged for {model_type} epoch {epoch + 1}")
-        else:  # Transaction prediction
-            print(f"Computing transaction metrics for {model_type} epoch {epoch + 1}")
-            self._compute_transaction_metrics()
-            print(f"Transaction metrics computed for {model_type} epoch {epoch + 1}")
-            print(f"Logging transaction plots for {model_type} epoch {epoch + 1}")
-            self._log_transaction_plots(model_type)
-            print(f"Transaction plots logged for {model_type} epoch {epoch + 1}")
+        # Compute heavy metrics during validation only (avoid noise/overhead during training)
+        if model_type == "val":
+            if self.all_labels:  # Binary classification (finetune)
+                self._compute_binary_metrics()
+            else:  # Transaction prediction (pretraining)
+                self._compute_transaction_metrics()
+                self._log_transaction_plots(model_type)
         
         # Add epoch and model_type info
         
@@ -414,7 +482,8 @@ class MetricsTracker:
         # We'll exclude it from the return dict to maintain float-only values
         # Log to wandb
         if self.wandb_run:
-            wandb_metrics = {f"{model_type}_{k}": v for k, v in self.metrics.items()}
+            wandb_metrics: Dict[str, Any] = {f"{model_type}_{k}": v for k, v in self.metrics.items()}
+            wandb_metrics["epoch"] = int(epoch)
             print(f"Logging metrics to wandb for {model_type} epoch {epoch + 1}")
             self.wandb_run.log(wandb_metrics)
             print(f"Metrics logged to wandb for {model_type} epoch {epoch + 1}")

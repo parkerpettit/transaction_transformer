@@ -55,7 +55,8 @@ class EmbeddingLayer(nn.Module):
         self.cont_features = schema.cont_features
         self.emb_dim = config.embedding.emb_dim
         self.padding_idx = config.data.padding_idx
-        self.dropout_float = config.emb_dropout
+        # Use embedding dropout from embedding section, not legacy emb_dropout
+        self.dropout_float = config.embedding.dropout
 
         # One learned mask vector for continuous masked positions
         self.mask_token = nn.Parameter(torch.randn(self.emb_dim) * 0.02)
@@ -90,7 +91,8 @@ class EmbeddingLayer(nn.Module):
             gamma = self.freq_enc(clean)            # (B, L, 2L)
             y = proj(gamma)                         # (B, L, D)
             if m.any():
-                y[m] = self.mask_token             # replace masked slots
+                # Ensure dtype/device match under AMP (bf16/fp16)
+                y[m] = self.mask_token.to(dtype=y.dtype, device=y.device)  # replace masked slots
             cont_embs.append(y)
 
         # --- Stack all fields along K ---

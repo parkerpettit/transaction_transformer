@@ -41,11 +41,14 @@ model:
     total_epochs: 1
     batch_size: 128 
     learning_rate: 5.0e-5
-    model_type: "ar"  # "mlm" or "ar"
+    model_type: "mlm"  # "mlm" or "ar"
     optimizer: "adamw"
     scheduler: "cosine"
-    mixed_precision: false
+    mixed_precision: true
+    amp_dtype: bf16
+    grad_clip_norm: 1.0
     early_stopping_patience: 5
+    max_batches_per_epoch: null  # null for full epoch; integer for debug cap
     device: "cuda"
     num_workers: 4
     positive_weight: 9.08  # Weight for positive (fraud) class. if 1.0, calculate from data
@@ -86,6 +89,7 @@ metrics:
   run_name: finetune
   wandb: true
   wandb_project: "transaction-transformer"
+  wandb_entity: null
   seed: 42
   deterministic: false
   log_gradients: false

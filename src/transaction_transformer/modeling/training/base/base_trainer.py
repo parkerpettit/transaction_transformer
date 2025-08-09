@@ -4,6 +4,7 @@ Abstract base trainer class for transaction transformer.
 
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional, List, Tuple
+import logging
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -13,6 +14,7 @@ from transaction_transformer.data.preprocessing import FieldSchema
 from transaction_transformer.config.config import Config
 import wandb
 from tqdm import tqdm
+from torch.amp.grad_scaler import GradScaler  # new API only (preferred import path)
 
 class BaseTrainer(ABC):
     """Abstract base class for all trainers."""
@@ -36,24 +38,16 @@ class BaseTrainer(ABC):
         self.scheduler = scheduler
         self.schema = schema
         self.config = config
+        self.logger = logging.getLogger(__name__)
         # Initialize components
         if self.config.model.mode == "pretrain":
             self.checkpoint_manager = CheckpointManager(self.config.model.pretrain_checkpoint_dir, stage="pretrain")
         else:
             self.checkpoint_manager = CheckpointManager(self.config.model.finetune_checkpoint_dir, stage="finetune")
         self.metrics = MetricsTracker(ignore_index=self.config.model.data.ignore_idx)
-        # Use an existing wandb run if initialized earlier (e.g., to declare artifact inputs)
-        # Otherwise, initialize a run here.
-        if config.metrics.wandb:
-            if wandb.run is None:
-                self.metrics.wandb_run = wandb.init(
-                    project=config.metrics.wandb_project,
-                    name=config.metrics.run_name,
-                    config=config.to_dict(),
-                    tags=[config.model.training.model_type],
-                )
-            else:
-                self.metrics.wandb_run = wandb.run
+        # Use an existing wandb run if initialized earlier. Do NOT initialize here.
+        self.metrics.wandb_run = wandb.run if config.metrics.wandb else None
+        wandb.watch(self.model, log="all") if config.metrics.wandb else None
         self.metrics.class_names = self.schema.cat_features + self.schema.cont_features if config.model.mode == "pretrain" else ["non-fraud", "fraud"]
         self.patience = config.model.training.early_stopping_patience
         # Training state
@@ -68,6 +62,24 @@ class BaseTrainer(ABC):
         "{rate_fmt} | "             # batches / sec
         "{postfix}"                 # losses go here
     )
+
+        # AMP configuration (latest syntax)
+        mp_cfg = self.config.model.training
+        requested_dtype = str(getattr(mp_cfg, "amp_dtype", "bf16")).lower()
+        use_cuda = (self.device.type == "cuda")
+        # Prefer bf16 on Ampere+; fall back to fp16 if not supported
+        use_bf16 = use_cuda and requested_dtype in ("bf16", "bfloat16") and torch.cuda.is_available() and torch.cuda.is_bf16_supported()
+        self.autocast_dtype = torch.bfloat16 if use_bf16 else torch.float16
+        self.amp_enabled = bool(use_cuda and mp_cfg.mixed_precision)
+        # GradScaler only for fp16 (new torch.amp API)
+        use_scaler = bool(self.amp_enabled and self.autocast_dtype is torch.float16)
+        # Explicitly pass device per deprecation guidance
+        self.grad_scaler = GradScaler(device="cuda", enabled=use_scaler)
+        # Optional gradient clipping
+        self.grad_clip_norm = getattr(mp_cfg, "grad_clip_norm", None)
+        if self.amp_enabled:
+            dtype_name = "bf16" if self.autocast_dtype is torch.bfloat16 else "fp16"
+            self.logger.info("AMP enabled (dtype=%s, scaler=%s)", dtype_name, str(use_scaler))
 
     @abstractmethod
     def forward_pass(self, batch: Dict[str, torch.Tensor]) -> Tuple[Dict[str, torch.Tensor], torch.Tensor, torch.Tensor]:
@@ -101,11 +113,13 @@ class BaseTrainer(ABC):
             train_metrics = self.train_epoch()
             self.metrics.end_epoch(self.current_epoch, "train")
 
-            # Validate for one epoch
+            # Validate for one epoch (guard empty loaders)
             self.metrics.start_epoch()
             self.val_bar = tqdm(self.val_loader, desc=f"Validation Epoch {epoch+1}", bar_format=self.bar_fmt, leave=True)
             val_metrics = self.validate_epoch()
             self.metrics.end_epoch(self.current_epoch, "val")
+            if not val_metrics or (isinstance(val_metrics.get("loss", None), float) and (val_metrics["loss"] != val_metrics["loss"])):
+                print("[Trainer] Warning: validation produced no batches or NaN loss. Check your dataset/splits.")
             
             # Track best and log to W&B every epoch with artifact versioning
             is_best = False

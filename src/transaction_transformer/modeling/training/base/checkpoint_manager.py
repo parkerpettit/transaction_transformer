@@ -101,15 +101,36 @@ class CheckpointManager:
         meta: Dict[str, Any],
         epoch: int,
         is_best: bool,
+        training_mode: str,
     ) -> None:
         if wandb_run is None:
             return
-        # Versioned artifact name per run; aliases distinguish epochs
-        base_name = f"{self.stage}-{wandb_run.id}"
+        # Simple, stable artifact naming for easy downstream consumption
+        # Pretrain: always log to a single collection name so finetune can "use_artifact('pretrained-backbone:best')"
+        if self.stage == "pretrain":
+            base_name = f"pretrained-backbone-{training_mode}"
+        else:
+            base_name = f"finetuned-model-{training_mode}"
         artifact = wandb.Artifact(base_name, type="model", metadata=meta)
         artifact.add_file(str(backbone_path), name="backbone.pt")
         artifact.add_file(str(head_path), name=("pretrain_head.pt" if self.stage == "pretrain" else "clf_head.pt"))
-        aliases = [f"epoch-{epoch:04d}", "latest"]
+        # Optionally attach stage logs to the model artifact (pretrain)
+        if self.stage == "pretrain":
+            log_file = os.environ.get("TT_PRETRAIN_LOG_FILE")
+            if log_file and Path(log_file).exists():
+                try:
+                    artifact.add_file(str(log_file), name="pretrain.log")
+                except Exception:
+                    pass
+        elif self.stage == "finetune":
+            log_file = os.environ.get("TT_FINETUNE_LOG_FILE")
+            if log_file and Path(log_file).exists():
+                try:
+                    artifact.add_file(str(log_file), name="finetune.log")
+                except Exception:
+                    pass
+        # Keep aliases extremely simple: track only latest and best
+        aliases = ["latest"]
         if is_best:
             aliases.append("best")
         print(f"[CheckpointManager] Logging W&B artifact {base_name} with aliases {aliases}")
@@ -138,7 +159,15 @@ class CheckpointManager:
                 print(f"[CheckpointManager] Warning: failed to save local 'best' exports: {e}")
         meta = self._build_meta(schema, config, epoch, global_step, val_metrics)
         # Log to W&B with epoch aliases
-        self.log_epoch_artifact(wandb_run, backbone_path, head_path, meta, epoch, is_best)
+        self.log_epoch_artifact(
+            wandb_run,
+            backbone_path,
+            head_path,
+            meta,
+            epoch,
+            is_best,
+            training_mode=config.training.model_type,
+        )
 
     # -------------------------- loading helpers --------------------------- #
     @staticmethod
@@ -183,111 +212,6 @@ class CheckpointManager:
         print(f"[CheckpointManager] Loaded backbone from artifact {artifact_ref}")
         return payload.get("meta", {})
 
-    # ----------------------- Discovery helpers ---------------------- #
-    @staticmethod
-    def find_latest_stage_artifact_ref(
-        entity: str,
-        project: str,
-        stage: str = "pretrain",
-        prefer_alias: str = "best",
-    ) -> Optional[str]:
-        """Find the most recent W&B model artifact for a given stage in a project.
-
-        Strategy:
-          1) Find the latest run with matching jobType ("debug-<stage>") and construct
-             the artifact ref "<entity>/<project>/<stage>-<run.id>:<prefer_alias>".
-          2) If the preferred alias is missing, fall back to ":latest" for that run.
-          3) If that fails, scan all model artifacts named f"{stage}-*" and pick the
-             most recently updated one with the preferred alias, else any latest.
-        Returns a fully-qualified artifact ref string or None.
-        """
-        try:
-            api = wandb.Api()
-            # Step 1: try to locate the most recent run for this stage
-            runs = api.runs(f"{entity}/{project}", filters={"jobType": f"debug-{stage}"})
-            if len(runs) > 0:
-                # Sort by created_at/start_time descending
-                def _run_ts(r: Any) -> float:
-                    import datetime as _dt
-                    val = getattr(r, "created_at", None) or getattr(r, "start_time", None)
-                    if isinstance(val, (int, float)):
-                        return float(val)
-                    if isinstance(val, _dt.datetime):
-                        return val.timestamp()
-                    if isinstance(val, str):
-                        try:
-                            # W&B often returns ISO strings
-                            return _dt.datetime.fromisoformat(val.replace("Z", "+00:00")).timestamp()
-                        except Exception:
-                            return 0.0
-                    return 0.0
-                runs_sorted = sorted(runs, key=_run_ts, reverse=True)
-                latest_run = runs_sorted[0]
-                base = f"{entity}/{project}/{stage}-{latest_run.id}"
-                # Prefer alias first
-                candidate = f"{base}:{prefer_alias}"
-                try:
-                    _ = api.artifact(candidate, type="model")
-                    return candidate
-                except Exception:
-                    # Fall back to latest for that run
-                    candidate_latest = f"{base}:latest"
-                    try:
-                        _ = api.artifact(candidate_latest, type="model")
-                        return candidate_latest
-                    except Exception:
-                        pass
-
-            # Step 2: global scan across collections named stage-*
-            atype = api.artifact_type(type_name="model", project=f"{entity}/{project}")
-            collections = atype.collections()
-            best_artifacts = []
-            latest_artifacts = []
-            for coll in collections:
-                if not coll.name.startswith(f"{stage}-"):
-                    continue
-                versions_fn = getattr(coll, "versions", None)
-                version_list_iter = []
-                if callable(versions_fn):
-                    try:
-                        for _art in versions_fn():  # type: ignore[misc, call-arg]
-                            version_list_iter.append(_art)
-                    except Exception:
-                        version_list_iter = []
-                for art in version_list_iter:
-                    # aliases may be strings or objects with .name
-                    alias_names = []
-                    for a in getattr(art, "aliases", []):
-                        name = getattr(a, "name", None)
-                        if isinstance(a, str):
-                            alias_names.append(a)
-                        elif isinstance(name, str):
-                            alias_names.append(name)
-                    if prefer_alias in alias_names:
-                        best_artifacts.append(art)
-                    if "latest" in alias_names:
-                        latest_artifacts.append(art)
-            # Prefer artifacts tagged with the preferred alias
-            def _art_time(a: Any) -> float:
-                import datetime as _dt
-                val = getattr(a, "updated_at", None) or getattr(a, "created_at", None)
-                if isinstance(val, (int, float)):
-                    return float(val)
-                if isinstance(val, _dt.datetime):
-                    return val.timestamp()
-                if isinstance(val, str):
-                    try:
-                        return _dt.datetime.fromisoformat(val.replace("Z", "+00:00")).timestamp()
-                    except Exception:
-                        return 0.0
-                return 0.0
-
-            if best_artifacts:
-                best_artifacts.sort(key=_art_time, reverse=True)
-                return getattr(best_artifacts[0], "qualname", None)
-            if latest_artifacts:
-                latest_artifacts.sort(key=_art_time, reverse=True)
-                return getattr(latest_artifacts[0], "qualname", None)
-        except Exception as e:
-            print(f"[CheckpointManager] Warning: failed to find latest artifact: {e}")
-        return None
+    # Discovery helpers removed to simplify the flow. We now rely on a single
+    # straightforward rule in finetune: if W&B is enabled and use_local_inputs=false,
+    # auto-load the most recent pretrain run's best (or latest) artifact by run id.

@@ -87,6 +87,17 @@ The project uses YAML configuration files for all settings:
 
 **All defaults are handled in config files** - the CLI is only used to override settings for quick testing. You can edit the YAML files directly to change any settings.
 
+Key toggles:
+
+- `metrics.wandb` (bool): enable/disable W&B logging.
+- `metrics.wandb_entity` (str|null): team/user entity for W&B.
+- `model.training.max_batches_per_epoch` (int|null): when set, caps batches per epoch for quick debugging; null means full epoch.
+- `model.data.use_local_inputs` (bool): if false, use W&B artifacts; if true, load from the local paths below.
+- Local overrides when `use_local_inputs: true`:
+  - `model.data.raw_csv_path` (preprocess stage)
+  - `model.data.preprocessed_path` (expects parquet + schema in that directory or a torch bundle)
+  - `model.training.pretrained_backbone_path` (optional local backbone)
+
 Key configuration options:
 - Model architecture (embedding dim, transformer layers, etc.)
 - Training parameters (batch size, learning rate, epochs)
