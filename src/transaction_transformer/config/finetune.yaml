@@ -94,3 +94,4 @@ metrics:
   deterministic: false
   log_gradients: false
   log_parameters: false
+#TODO go through and remove the parameters that are not used
