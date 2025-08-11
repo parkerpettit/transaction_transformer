@@ -178,40 +178,9 @@ class CheckpointManager:
         print(f"[CheckpointManager] Loaded backbone export from {path}")
         return payload.get("meta", {})
 
-    @staticmethod
+    @staticmethod # never used
     def load_export_head(path: str, head: torch.nn.Module) -> Dict[str, Any]:
         payload = torch.load(path, map_location="cpu", weights_only=False)
         head.load_state_dict(payload["state_dict"], strict=True)
         print(f"[CheckpointManager] Loaded head export from {path}")
         return payload.get("meta", {})
-
-    
-
-    # ----------------------- Artifact-based loading helpers ---------------------- #
-    @staticmethod
-    def load_backbone_from_artifact(
-        artifact_ref: str,
-        backbone: torch.nn.Module,
-        wandb_run: Optional[Any] = None,
-    ) -> Dict[str, Any]:
-        """Download a W&B artifact (e.g., 'entity/project/pretrain-<runid>:best') and load backbone.
-
-        If a W&B run is provided, uses run.use_artifact so the artifact is attached as an input
-        dependency to the run, ensuring lineage reflects pretrain -> finetune. Otherwise falls
-        back to the public API download which does not create lineage.
-        """
-        if wandb_run is not None:
-            art = wandb_run.use_artifact(artifact_ref)
-            artifact_dir = Path(art.download())
-        else:
-            api = wandb.Api()
-            artifact = api.artifact(artifact_ref, type="model")
-            artifact_dir = Path(artifact.download())
-        payload = torch.load(str(artifact_dir / "backbone.pt"), map_location="cpu", weights_only=False)
-        backbone.load_state_dict(payload["state_dict"], strict=True)
-        print(f"[CheckpointManager] Loaded backbone from artifact {artifact_ref}")
-        return payload.get("meta", {})
-
-    # Discovery helpers removed to simplify the flow. We now rely on a single
-    # straightforward rule in finetune: if W&B is enabled and use_local_inputs=false,
-    # auto-load the most recent pretrain run's best (or latest) artifact by run id.
