@@ -14,8 +14,6 @@ Unified tabular transformer (UniTTab-style) for credit-card fraud detection. Pre
 git clone https://github.com/parkerpettit/transaction_transformer.git
 cd transaction_transformer
 pip install -e .
-# Dev tools (tests/format/lint)
-pip install -e .[dev]
 ```
 
 Python >= 3.8. Key deps: torch, pandas, numpy, scikit-learn, wandb, pyarrow/fastparquet.
@@ -110,7 +108,7 @@ evaluate_models
 ```
 The default `evaluate_model.py` contains example artifact names; edit that list to compare your versions.
 
-## Model Architecture (summary)
+## Model Architecture Summary
 - Categorical features: `nn.Embedding(vocab_size, D, padding_idx=0)` with specials 0=PAD, 1=MASK, 2=UNK
 - Continuous features: frequency encoding (L=8) -> per‑feature linear to D; NaNs used as mask sentinels and replaced by a learned mask vector
 - Field Transformer (intra‑row) -> RowProjector -> Sequence Transformer (inter‑row; causal for AR, bidirectional for MLM) -> RowExpander -> per‑field heads
