@@ -193,9 +193,9 @@ class MetricsTracker:
                 
             if fpr <= target_fpr:
                 best_threshold = mid
-                high = mid - 1e-10
+                high = mid - 1e-20
             else:
-                low = mid + 1e-10
+                low = mid + 1e-20
     
         return best_threshold
 
@@ -485,9 +485,9 @@ class MetricsTracker:
         if self.wandb_run:
             wandb_metrics: Dict[str, Any] = {f"{model_type}_{k}": v for k, v in self.metrics.items()}
             wandb_metrics["epoch"] = int(epoch)
-            print(f"Logging metrics to wandb for {model_type} epoch {epoch + 1}")
+            print(f"Logging metrics to wandb for {model_type} epoch {epoch}")
             self.wandb_run.log(wandb_metrics)
-            print(f"Metrics logged to wandb for {model_type} epoch {epoch + 1}")
+            print(f"Metrics logged to wandb for {model_type} epoch {epoch}")
         
         # Store in history
         return

@@ -81,7 +81,6 @@ class TxnDataset(Dataset):
         return len(self.indices)
 
     def __getitem__(self, i):
-        # no Python slicing of numpy, just index into shared‐memory torch.Tensors
         gidx, off = int(self.indices[i,0]), int(self.indices[i,1])
         base, _   = self.group_offsets[gidx]
         st, en    = base + off, base + off + self.window

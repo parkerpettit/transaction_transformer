@@ -2,7 +2,7 @@ import torch.nn as nn
 from torch import Tensor, LongTensor
 from transaction_transformer.config.config import ModelConfig
 from transaction_transformer.modeling.models.backbone import Backbone
-from transaction_transformer.modeling.models.components import ClassificationHead
+from transaction_transformer.modeling.models.components import ClassificationHead, LSTMHead
 from transaction_transformer.data.preprocessing.schema import FieldSchema
 from transaction_transformer.modeling.training.base.checkpoint_manager import CheckpointManager
 import torch
@@ -22,7 +22,10 @@ class FraudDetectionModel(nn.Module):
         self.backbone = Backbone(config, schema)
         
         # Initialize the classification head
-        self.head = ClassificationHead(config)
+
+        self.head = ClassificationHead(config) 
+        # uncomment to use lstm head instead
+        # self.head = LSTMHead(config)
         
         # Flag to control whether to freeze the embedding model
         self.freeze_embedding = config.freeze_embedding
@@ -70,3 +73,6 @@ class FraudDetectionModel(nn.Module):
         # Pass through the classification head
         logits = self.head(last_embedding)  # (B, 1) -> squeeze to (B,)
         return logits.squeeze(-1)  # (B,)
+
+        #TODO change so that it puts all B, L, M embeddings through instead of just the last one, because lstm head needs all of them
+        # and then change the head to slice off the last embedding and pass that through the mlp

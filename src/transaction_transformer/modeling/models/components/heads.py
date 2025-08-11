@@ -75,4 +75,23 @@ class ClassificationHead(nn.Module):
         )
 
     def forward(self, x: Tensor) -> Tensor:
-        return self.mlp(x) # (B, L, M) -> (B, 1) -> (B,)
+        return self.mlp(x) # (B, L, M) -> (B, 1)
+
+
+# -------------------------------------------------------------------------------------- #
+# LSTM head
+# -------------------------------------------------------------------------------------- #
+class LSTMHead(nn.Module):
+    """
+    LSTM head. Takes in a (B, L, M) embedding and returns a (B,) logits for the fraud classification.
+    """
+    def __init__(self, config: ModelConfig):
+        super().__init__()
+        self.lstm = nn.LSTM(input_size=config.sequence_transformer.d_model, hidden_size=config.classification.hidden_dim, num_layers=config.classification.depth, batch_first=True)
+        self.fc = nn.Linear(config.classification.hidden_dim, 1)
+
+    def forward(self, x: Tensor) -> Tensor:
+        embeddings, _ = self.lstm(x)
+        last_embedding = embeddings[:, -1, :] # (B, L, M) -> (B, M)
+        logits = self.fc(last_embedding) # (B, M) -> (B, 1)
+        return logits

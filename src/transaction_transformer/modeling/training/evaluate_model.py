@@ -18,6 +18,7 @@ from transaction_transformer.config.config import Config, ConfigManager
 from transaction_transformer.data.preprocessing.schema import FieldSchema
 from transaction_transformer.data.collator import FinetuneCollator
 import pandas as pd
+from transaction_transformer.utils.wandb_utils import init_wandb
 
 def create_datasets(
     df: pd.DataFrame,
