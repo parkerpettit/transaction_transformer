@@ -38,7 +38,7 @@ model:
     mask_token_init_std: 0.02
   
   training:
-    total_epochs: 1
+    total_epochs: 10
     batch_size: 128 
     learning_rate: 5.0e-5
     model_type: "mlm"  # "mlm" or "ar"

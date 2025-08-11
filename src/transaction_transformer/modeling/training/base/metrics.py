@@ -193,9 +193,9 @@ class MetricsTracker:
                 
             if fpr <= target_fpr:
                 best_threshold = mid
-                high = mid - 1e-6
+                high = mid - 1e-10
             else:
-                low = mid + 1e-6
+                low = mid + 1e-10
     
         return best_threshold
 
@@ -215,7 +215,7 @@ class MetricsTracker:
         # Store metrics for each threshold
         metrics = {}
 
-        rows_for_table = []
+        # rows_for_table = []
         for target_fpr, threshold in zip(target_fprs, thresholds):
             preds_np = (probs_np >= threshold).astype(np.int8)
 
@@ -243,17 +243,17 @@ class MetricsTracker:
 
             self._log_confusion_matrix(labels_np, preds_np, target_fpr)
 
-            rows_for_table.append([
-                int(self.current_epoch),
-                float(target_fpr),
-                float(threshold),
-                float(precision),
-                float(recall),
-                float(f1),
-                float(accuracy),
-                float(class_acc[0]),
-                float(class_acc[1]),
-            ])
+            # rows_for_table.append([
+            #     int(self.current_epoch),
+            #     float(target_fpr),
+            #     float(threshold),
+            #     float(precision),
+            #     float(recall),
+            #     float(f1),
+            #     float(accuracy),
+            #     float(class_acc[0]),
+            #     float(class_acc[1]),
+            # ])
 
         # AUC metrics (not threshold-dependent)
         try:
@@ -271,15 +271,16 @@ class MetricsTracker:
         self.metrics.update(metrics)
         self._log_roc_pr_curves(labels_np, probs_np)
 
-        # Log raw prediction probabilities and labels for post-hoc thresholding
-        if self.wandb_run:
-            pred_rows = [[int(self.current_epoch), int(i), float(p), int(l)] for i, (p, l) in enumerate(zip(probs_np, labels_np))]
-            pred_tbl = wandb.Table(columns=["epoch", "index", "prob", "label"], data=pred_rows)
-            self.wandb_run.log({
-                "epoch": self.current_epoch,
-                "val_predictions_table": pred_tbl,
-            })
+        # # Log raw prediction probabilities and labels for post-hoc thresholding
+        # if self.wandb_run:
+        #     pred_rows = [[int(self.current_epoch), int(i), float(p), int(l)] for i, (p, l) in enumerate(zip(probs_np, labels_np))]
+        #     pred_tbl = wandb.Table(columns=["epoch", "index", "prob", "label"], data=pred_rows)
+        #     self.wandb_run.log({
+        #         "epoch": self.current_epoch,
+        #         "val_predictions_table": pred_tbl,
+        #     })
 
+        if self.wandb_run:
             # Precision/Recall/F1 vs threshold curve (dense sampling)
             thresholds_dense = np.linspace(0.0, 1.0, 201)
             prf_rows = []
@@ -304,16 +305,16 @@ class MetricsTracker:
                 ),
             })
 
-        # Log a compact threshold metrics table per epoch
-        if self.wandb_run and rows_for_table:
-            tbl = wandb.Table(columns=[
-                "epoch", "target_fpr_percent", "threshold", "precision", "recall", "f1",
-                "overall_accuracy", "non_fraud_acc", "fraud_acc",
-            ], data=rows_for_table)
-            self.wandb_run.log({
-                "epoch": self.current_epoch,
-                "val_threshold_metrics_table": tbl,
-            })
+        # # Log a compact threshold metrics table per epoch
+        # if self.wandb_run and rows_for_table:
+        #     tbl = wandb.Table(columns=[
+        #         "epoch", "target_fpr_percent", "threshold", "precision", "recall", "f1",
+        #         "overall_accuracy", "non_fraud_acc", "fraud_acc",
+        #     ], data=rows_for_table)
+        #     self.wandb_run.log({
+        #         "epoch": self.current_epoch,
+        #         "val_threshold_metrics_table": tbl,
+        #     })
         return metrics
     
     def _compute_transaction_metrics(self) -> None:
@@ -336,17 +337,17 @@ class MetricsTracker:
         
         self.metrics.update(metrics)
         # Log a per-feature accuracy table
-        if self.wandb_run and self.feature_total:
-            rows = []
-            for feature_name in self.feature_total.keys():
-                total_positions = self.feature_total[feature_name]
-                acc = self.feature_correct[feature_name] / total_positions if total_positions > 0 else 0.0
-                rows.append([int(self.current_epoch), feature_name, float(acc), int(total_positions)])
-            tbl = wandb.Table(columns=["epoch", "feature", "accuracy", "valid_positions"], data=rows)
-            self.wandb_run.log({
-                "epoch": self.current_epoch,
-                "transaction_feature_accuracy_table": tbl,
-            })
+        # if self.wandb_run and self.feature_total:
+        #     rows = []
+        #     for feature_name in self.feature_total.keys():
+        #         total_positions = self.feature_total[feature_name]
+        #         acc = self.feature_correct[feature_name] / total_positions if total_positions > 0 else 0.0
+        #         rows.append([int(self.current_epoch), feature_name, float(acc), int(total_positions)])
+        #     tbl = wandb.Table(columns=["epoch", "feature", "accuracy", "valid_positions"], data=rows)
+        #     self.wandb_run.log({
+        #         "epoch": self.current_epoch,
+        #         "transaction_feature_accuracy_table": tbl,
+        #     })
     
     def _log_confusion_matrix(self, labels_np: np.ndarray, preds_np: np.ndarray, target_fpr: float) -> None:
         """Log confusion matrix to wandb for a specific threshold (target FPR)."""

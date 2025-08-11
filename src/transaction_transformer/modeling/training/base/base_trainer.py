@@ -47,7 +47,7 @@ class BaseTrainer(ABC):
         self.metrics = MetricsTracker(ignore_index=self.config.model.data.ignore_idx)
         # Use an existing wandb run if initialized earlier. Do NOT initialize here.
         self.metrics.wandb_run = wandb.run if config.metrics.wandb else None
-        wandb.watch(self.model, log="all") if config.metrics.wandb else None
+        # wandb.watch(self.model, log="all") if config.metrics.wandb else None
         self.metrics.class_names = self.schema.cat_features + self.schema.cont_features if config.model.mode == "pretrain" else ["non-fraud", "fraud"]
         self.patience = config.model.training.early_stopping_patience
         # Training state

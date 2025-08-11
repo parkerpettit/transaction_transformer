@@ -38,7 +38,7 @@ model:
 
   
   training:
-    total_epochs: 1
+    total_epochs: 5
     batch_size: 64
     learning_rate: 1.0e-4
     model_type: "mlm"  # "mlm" or "ar"
