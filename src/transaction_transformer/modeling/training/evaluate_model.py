@@ -93,7 +93,7 @@ def main():
     val_ds = create_datasets(val_df, config, schema)
 
     device = torch.device(config.get_device())
-    artifact_names = ["finetuned-model-ar:v5", "finetuned-model-mlm:v5"]
+    artifact_names = ["finetuned-model-ar:v5", "finetuned-model-mlm:best"]
     
     # Select training model_type based on config
     evaluater = evaluate(artifact_names, val_ds, schema, config, device)

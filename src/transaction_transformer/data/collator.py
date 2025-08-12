@@ -43,11 +43,10 @@ class MLMTabCollator(BaseTabCollator):
         field_mask_cat = (torch.rand(B, L, C, device=device) < self.p_field)
         field_mask_cont = (torch.rand(B, L, F, device=device) < self.p_field)
 
-        # 2) Joint timestamp masking (vectorized)
+        # 2) Joint timestamp masking (one Bernoulli per (B, L), applied to all time subfields)
         if self.time_cat_idx:
-            time_cat_mask = field_mask_cat[..., self.time_cat_idx]  # (B, L, num_time_cat)
-            any_time_masked = time_cat_mask.any(dim=-1, keepdim=True)  # (B, L, 1)
-            field_mask_cat[..., self.time_cat_idx] |= any_time_masked.expand(-1, -1, len(self.time_cat_idx))
+            time_joint = (torch.rand(B, L, device=device) < self.p_field).unsqueeze(-1)  # (B, L, 1)
+            field_mask_cat[..., self.time_cat_idx] |= time_joint.expand(-1, -1, len(self.time_cat_idx))
 
         # 3) Row masking (fused with field masking)
         row_mask = (torch.rand(B, L, device=device) < self.p_row).unsqueeze(-1)  # (B, L, 1)

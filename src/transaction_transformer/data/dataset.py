@@ -75,7 +75,9 @@ class TxnDataset(Dataset):
                         idx_set.add((gidx, off))
         
 
-        self.indices = torch.as_tensor(list(idx_set), dtype=torch.int64)
+        # Sort deterministically for reproducibility
+        sorted_indices = sorted(list(idx_set))
+        self.indices = torch.as_tensor(sorted_indices, dtype=torch.int64)
 
     def __len__(self):
         return len(self.indices)

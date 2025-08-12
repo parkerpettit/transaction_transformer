@@ -63,23 +63,16 @@ class BaseTrainer(ABC):
         "{postfix}"                 # losses go here
     )
 
-        # AMP configuration (latest syntax)
+        # AMP configuration: enable autocast when requested; dtype is selected by PyTorch defaults
         mp_cfg = self.config.model.training
-        requested_dtype = str(getattr(mp_cfg, "amp_dtype", "bf16")).lower()
         use_cuda = (self.device.type == "cuda")
-        # Prefer bf16 on Ampere+; fall back to fp16 if not supported
-        use_bf16 = use_cuda and requested_dtype in ("bf16", "bfloat16") and torch.cuda.is_available() and torch.cuda.is_bf16_supported()
-        self.autocast_dtype = torch.bfloat16 if use_bf16 else torch.float16
         self.amp_enabled = bool(use_cuda and mp_cfg.mixed_precision)
-        # GradScaler only for fp16 (new torch.amp API)
-        use_scaler = bool(self.amp_enabled and self.autocast_dtype is torch.float16)
-        # Explicitly pass device per deprecation guidance
-        self.grad_scaler = GradScaler(device="cuda", enabled=use_scaler)
+        # Use GradScaler when mixed precision is enabled; PyTorch will no-op as appropriate
+        self.grad_scaler = GradScaler(enabled=self.amp_enabled)
         # Optional gradient clipping
         self.grad_clip_norm = getattr(mp_cfg, "grad_clip_norm", None)
         if self.amp_enabled:
-            dtype_name = "bf16" if self.autocast_dtype is torch.bfloat16 else "fp16"
-            self.logger.info("AMP enabled (dtype=%s, scaler=%s)", dtype_name, str(use_scaler))
+            self.logger.info("AMP enabled")
 
     @abstractmethod
     def forward_pass(self, batch: Dict[str, torch.Tensor]) -> Tuple[Dict[str, torch.Tensor], torch.Tensor, torch.Tensor]:
@@ -105,17 +98,17 @@ class BaseTrainer(ABC):
         """Main training loop."""
         patience_counter = 0
         for epoch in range(num_epochs):
-            self.current_epoch = epoch + 1
+            self.current_epoch = epoch + 1 # temp change for resuming, remove later
             self.metrics.current_epoch = self.current_epoch
             # Train for one epoch
             self.metrics.start_epoch()
-            self.train_bar = tqdm(self.train_loader, desc=f"Training Epoch {epoch+1}", bar_format=self.bar_fmt, leave=True)
+            self.train_bar = tqdm(self.train_loader, desc=f"Training Epoch {self.current_epoch}", bar_format=self.bar_fmt, leave=True)
             train_metrics = self.train_epoch()
             self.metrics.end_epoch(self.current_epoch, "train")
 
             # Validate for one epoch (guard empty loaders)
             self.metrics.start_epoch()
-            self.val_bar = tqdm(self.val_loader, desc=f"Validation Epoch {epoch+1}", bar_format=self.bar_fmt, leave=True)
+            self.val_bar = tqdm(self.val_loader, desc=f"Validation Epoch {self.current_epoch}", bar_format=self.bar_fmt, leave=True)
             val_metrics = self.validate_epoch()
             self.metrics.end_epoch(self.current_epoch, "val")
             if not val_metrics or (isinstance(val_metrics.get("loss", None), float) and (val_metrics["loss"] != val_metrics["loss"])):
@@ -132,7 +125,7 @@ class BaseTrainer(ABC):
             else:
                 patience_counter += 1
                 if patience_counter >= self.patience:
-                    print(f"Early stopping triggered after {epoch + 1} epochs.")
+                    print(f"Early stopping triggered after {self.current_epoch} epochs.")
                     break
 
             # Save local exports (overwrite) and log a W&B artifact version for this epoch
@@ -155,7 +148,7 @@ class BaseTrainer(ABC):
                     print(f"[Trainer] Warning: failed to save/log epoch artifact: {e}")
             
             # Print progress
-            print(f"Epoch {epoch+1}/{num_epochs}")
+            print(f"Epoch {self.current_epoch}/{num_epochs}")
             print(f"Train Loss: {train_metrics.get('loss', 0):.4f}")
             print(f"Val Loss: {val_metrics.get('loss', 0):.4f}")
             print("-" * 50)

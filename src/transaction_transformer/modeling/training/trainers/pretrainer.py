@@ -162,7 +162,7 @@ class Pretrainer(BaseTrainer):
                 break
 
             # Forward and loss with AMP autocast
-            autocast_ctx = torch.autocast(device_type=self.device.type, dtype=self.autocast_dtype, enabled=self.amp_enabled)
+            autocast_ctx = torch.autocast(device_type=self.device.type, enabled=self.amp_enabled)
             with autocast_ctx:
                 logits, labels_cat, labels_cont = self.forward_pass(batch)
                 if batch_idx == 0:
@@ -230,7 +230,7 @@ class Pretrainer(BaseTrainer):
                 if isinstance(max_batches, int) and max_batches > 0 and batch_idx >= max_batches:
                     break
                 # Autocast in eval too
-                with torch.autocast(device_type=self.device.type, dtype=self.autocast_dtype, enabled=self.amp_enabled):
+                with torch.autocast(device_type=self.device.type, enabled=self.amp_enabled):
                     logits, labels_cat, labels_cont = self.forward_pass(batch)
                     loss = self.compute_loss(logits, labels_cat, labels_cont)
 

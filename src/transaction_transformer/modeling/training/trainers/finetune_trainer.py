@@ -73,7 +73,7 @@ class FinetuneTrainer(BaseTrainer):
                 break
 
             # Forward + loss with AMP autocast
-            with torch.autocast(device_type=self.device.type, dtype=self.autocast_dtype, enabled=self.amp_enabled):
+            with torch.autocast(device_type=self.device.type, enabled=self.amp_enabled):
                 logits, labels = self.forward_pass(batch)
                 loss = self.loss_fn(logits, labels.float()) # (B,)
             if batch_idx == 0:
@@ -129,7 +129,7 @@ class FinetuneTrainer(BaseTrainer):
             if isinstance(max_batches, int) and max_batches > 0 and batch_idx >= max_batches:
                 break
             # Autocast for eval forward
-            with torch.autocast(device_type=self.device.type, dtype=self.autocast_dtype, enabled=self.amp_enabled):
+            with torch.autocast(device_type=self.device.type, enabled=self.amp_enabled):
                 logits, labels = self.forward_pass(batch)
                 loss = self.val_loss_fn(logits, labels.float()) # (B,)
             if batch_idx == 0:

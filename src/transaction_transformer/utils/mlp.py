@@ -17,6 +17,5 @@ def build_mlp(input_dim: int, hidden_dim: int, output_dim: int, depth: int, drop
         layers.append(nn.Linear(hidden_dim, output_dim))
     else:
         layers.append(nn.Linear(input_dim, output_dim))
-        layers.append(nn.Dropout(dropout))
     return nn.Sequential(*layers)
     

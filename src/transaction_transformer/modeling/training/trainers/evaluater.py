@@ -109,7 +109,7 @@ class Evaluater:
         total_loss = 0.0
         batch_idx = 0
         for batch in self.val_bar:
-            with torch.autocast(device_type="cuda"):
+            with torch.autocast(device_type=self.device.type, enabled=(self.device.type == "cuda")):
                 logits, labels = self.forward_pass(model, batch)
                 loss = self.compute_loss(logits, labels) # (B,)
             self.metrics.update_binary_classification(logits, labels)
