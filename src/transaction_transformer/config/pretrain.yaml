@@ -7,39 +7,38 @@ model:
   log_dir: "logs"
   
   field_transformer:
-    d_model: 72
+    d_model: 64
     n_heads: 8
     depth: 1
-    ffn_mult: 4
+    ffn_mult: 1
     dropout: 0.1
     layer_norm_eps: 1.0e-6
-    norm_first: false
+    norm_first: true
   
   sequence_transformer:
-    d_model: 1080
-    n_heads: 12
-    depth: 12
-    ffn_mult: 4
+    d_model: 64
+    n_heads: 8
+    depth: 2
+    ffn_mult: 1
     dropout: 0.1
     layer_norm_eps: 1.0e-6
-    norm_first: false
+    norm_first: true
   
   embedding:
-    emb_dim: 72
+    emb_dim: 64
     dropout: 0.1
     padding_idx: 0
     freq_encoding_L: 8
-    mask_token_init_std: 0.02
 
   head:
-    hidden_dim: 512
-    depth: 0
-    dropout: 0.1
+    hidden_dim: 64
+    depth: 0 # 0 is a linear layer
+    dropout: 0.1 # ignored if depth == 0
 
   
   training:
-    total_epochs: 5
-    batch_size: 64
+    total_epochs: 3
+    batch_size: 256
     learning_rate: 1.0e-4
     model_type: "mlm"  # "mlm" or "ar"
     p_field: 0.15
@@ -47,23 +46,18 @@ model:
     joint_timestamp_masking: true
     optimizer: "adamw"
     scheduler: "cosine"
-    mixed_precision: true
-    amp_dtype: bf16
-    grad_clip_norm: 1.0
     early_stopping_patience: 5
-    max_batches_per_epoch: null  # null for full epoch; integer for debug cap
-    device: "cuda"
+    max_batches_per_epoch: 50  # null for full epoch; integer for debug cap
     num_workers: 4
-    # Resume control (deprecated in favor of W&B artifacts)
     resume: false
     resume_path: null
-  
+    use_amp: true
   data:
-    preprocessed_path: "data/processed/legit_processed.pt"  # local override bundle (optional)
+    preprocessed_path: "data/processed/"
     use_local_inputs: false  # if true, skip artifact download and use local files
     raw_csv_path: "data/raw/card_transaction.v1.csv"
-    raw_artifact_name: "raw-card-transactions-v1"
-    preprocessed_artifact_name: "preprocessed-card-v1"
+    raw_artifact_name: "raw-card-transactions"
+    preprocessed_artifact_name: "preprocessed-card"
     window: 10
     stride: 5
     num_bins: 100
@@ -75,12 +69,6 @@ model:
     ignore_idx: -100
 
 metrics:
-  run_name: pretrain
-  wandb: true
+  run_name: debug-pretrain
   wandb_project: "transaction-transformer"
-  wandb_entity: null
-  seed: 42
-  deterministic: false
-  log_gradients: false
-  log_parameters: false
-#TODO go through and remove the parameters that are not used
+

@@ -36,18 +36,25 @@ def _setup_logging(job_name: str = "pretrain") -> Path:
 
     ch = logging.StreamHandler()
     ch.setLevel(logging.INFO)
-    ch.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(name)s | %(message)s"))
+    ch.setFormatter(
+        logging.Formatter("%(asctime)s | %(levelname)s | %(name)s | %(message)s")
+    )
 
     fh = RotatingFileHandler(str(log_path), maxBytes=5_000_000, backupCount=3)
     fh.setLevel(logging.DEBUG)
-    fh.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(name)s | %(message)s"))
+    fh.setFormatter(
+        logging.Formatter("%(asctime)s | %(levelname)s | %(name)s | %(message)s")
+    )
 
     root.handlers.clear()
     root.addHandler(ch)
     root.addHandler(fh)
     return log_path
 
-def create_datasets(df: pd.DataFrame, config: Config, schema: FieldSchema) -> TxnDataset:
+
+def create_datasets(
+    df: pd.DataFrame, config: Config, schema: FieldSchema
+) -> TxnDataset:
     """Create a dataset from a dataframe and schema."""
     return TxnDataset(
         df=df,
@@ -65,7 +72,9 @@ def _load_preprocessed_from_artifact(
     download_root: Path,
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, FieldSchema]:
     # Always use lineage if run exists; otherwise, download via public API.
-    adir = download_artifact(wandb.run, preprocessed_ref, type="dataset", root=str(download_root))
+    adir = download_artifact(
+        wandb.run, preprocessed_ref, type="dataset", root=str(download_root)
+    )
     if prefer_legit:
         train_path = adir / "legit_train.parquet"
         val_path = adir / "legit_val.parquet"
@@ -78,8 +87,11 @@ def _load_preprocessed_from_artifact(
     train_df = pd.read_parquet(train_path)
     val_df = pd.read_parquet(val_path)
     test_df = pd.read_parquet(test_path)
-    schema: FieldSchema = torch.load(schema_path, map_location="cpu", weights_only=False)
+    schema: FieldSchema = torch.load(
+        schema_path, map_location="cpu", weights_only=False
+    )
     return train_df, val_df, test_df, schema
+
 
 def pretrain(
     model: PretrainingModel,
@@ -90,7 +102,7 @@ def pretrain(
     device: torch.device,
 ) -> Pretrainer:
     """Train model using AR pretraining."""
-    
+
     # Create collators
     if config.model.training.model_type == "ar":
         train_collator = ARTabCollator(config=config.model, schema=schema)
@@ -99,8 +111,10 @@ def pretrain(
         train_collator = MLMTabCollator(config=config.model, schema=schema)
         val_collator = MLMTabCollator(config=config.model, schema=schema)
     else:
-        raise ValueError(f"Invalid training model_type: {config.model.training.model_type}")
-    
+        raise ValueError(
+            f"Invalid training model_type: {config.model.training.model_type}"
+        )
+
     # Create data loaders
     train_loader = DataLoader(
         train_dataset,
@@ -109,9 +123,9 @@ def pretrain(
         collate_fn=train_collator,
         num_workers=config.model.training.num_workers,
         persistent_workers=True,
-        pin_memory=True
+        pin_memory=True,
     )
-    
+
     val_loader = DataLoader(
         val_dataset,
         batch_size=config.model.training.batch_size,
@@ -119,20 +133,19 @@ def pretrain(
         collate_fn=val_collator,
         num_workers=config.model.training.num_workers,
         persistent_workers=True,
-        pin_memory=True
+        pin_memory=True,
     )
-    
+
     # Create optimizer and scheduler
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=config.model.training.learning_rate,
     )
-    
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config.model.training.total_epochs)
-    
 
-    
-   
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=config.model.training.total_epochs
+    )
+
     # Create trainer
     trainer = Pretrainer(
         model=model,
@@ -146,9 +159,10 @@ def pretrain(
     )
     return trainer
 
+
 def main():
     """Main pretraining function."""
-    
+
     # Load configuration
     config_manager = ConfigManager(config_path="pretrain.yaml")
     config = config_manager.config
@@ -158,9 +172,16 @@ def main():
     # Setup logging & W&B
     log_file = _setup_logging("pretrain")
     logger.info("Starting pretraining job")
-    run = init_wandb(config, job_type="pretrain", tags=[config.model.training.model_type])
+    run = init_wandb(
+        config, job_type="pretrain", tags=[config.model.training.model_type, "pretrain", f"use_amp={config.model.training.use_amp}"]
+    )
     if wandb.run is not None:
-        logger.info("W&B run initialized | entity=%s project=%s run_id=%s", wandb.run.entity, wandb.run.project, wandb.run.id)
+        logger.info(
+            "W&B run initialized | entity=%s project=%s run_id=%s",
+            wandb.run.entity,
+            wandb.run.project,
+            wandb.run.id,
+        )
 
     # Always use LEGIT data for pretraining
     prefer_legit = True
@@ -168,7 +189,11 @@ def main():
     processed_dir = Path(config.model.data.preprocessed_path).parent
 
     # Artifact-first default unless use_local_inputs is True. Always use lineage (use_artifact)
-    if not config.model.data.use_local_inputs and config.model.data.preprocessed_artifact_name and wandb.run is not None:
+    if (
+        not config.model.data.use_local_inputs
+        and config.model.data.preprocessed_artifact_name
+        and wandb.run is not None
+    ):
         ref = f"{config.model.data.preprocessed_artifact_name}:latest"
         logger.info("Loading preprocessed data from artifact via use_artifact: %s", ref)
         t0 = time.time()
@@ -192,19 +217,36 @@ def main():
         # Local override path: expect files already present in data/processed or torch bundle as fallback
         torch_bundle = Path(config.model.data.preprocessed_path)
         if torch_bundle.exists():
-            logger.info("Loading preprocessed data from local torch bundle: %s", torch_bundle)
-            train_df, val_df, test_df, pt_schema = torch.load(str(torch_bundle), weights_only=False)
+            logger.info(
+                "Loading preprocessed data from local torch bundle: %s", torch_bundle
+            )
+            train_df, val_df, test_df, pt_schema = torch.load(
+                str(torch_bundle), weights_only=False
+            )
         else:
             # Try parquet + schema files under data/processed
-            logger.info("Loading preprocessed data from local parquet files in %s", processed_dir)
-            train_df = pd.read_parquet(processed_dir / ("legit_train.parquet" if prefer_legit else "train.parquet"))
-            val_df = pd.read_parquet(processed_dir / ("legit_val.parquet" if prefer_legit else "val.parquet"))
-            test_df = pd.read_parquet(processed_dir / ("legit_test.parquet" if prefer_legit else "test.parquet"))
-            pt_schema = torch.load(processed_dir / "schema.pt", map_location="cpu", weights_only=False)
+            logger.info(
+                "Loading preprocessed data from local parquet files in %s",
+                processed_dir,
+            )
+            train_df = pd.read_parquet(
+                processed_dir
+                / ("legit_train.parquet" if prefer_legit else "train.parquet")
+            )
+            val_df = pd.read_parquet(
+                processed_dir / ("legit_val.parquet" if prefer_legit else "val.parquet")
+            )
+            test_df = pd.read_parquet(
+                processed_dir
+                / ("legit_test.parquet" if prefer_legit else "test.parquet")
+            )
+            pt_schema = torch.load(
+                processed_dir / "schema.pt", map_location="cpu", weights_only=False
+            )
     train_ds = create_datasets(train_df, config, pt_schema)
     val_ds = create_datasets(val_df, config, pt_schema)
     logger.info("Dataset sizes | train=%d val=%d", len(train_ds), len(val_ds))
-    
+
     # Create model
     model = PretrainingModel(config=config.model, schema=pt_schema)
     device = torch.device(config.get_device())
@@ -228,7 +270,7 @@ def main():
         config.get_device(),
         str(getattr(config.model.training, "max_batches_per_epoch", None)),
     )
-    
+
     # Select training model_type based on config
     trainer = pretrain(model, train_ds, val_ds, pt_schema, config, device)
 
@@ -238,27 +280,48 @@ def main():
     # Optional resume for pretraining: load latest backbone/head from W&B or local
     if config.model.training.resume:
         loaded_resume = False
-        if config.metrics.wandb and not config.model.data.use_local_inputs and wandb.run is not None:
+        if (
+            config.metrics.wandb
+            and not config.model.data.use_local_inputs
+            and wandb.run is not None
+        ):
             try:
                 mode_suffix = config.model.training.model_type
-                pre_latest = f"pretrained-backbone-{mode_suffix}:latest"
+                pre_latest = f"pretrained-backbone:latest"
                 logger.info("Resuming pretrain from W&B artifact: %s", pre_latest)
                 art = wandb.run.use_artifact(pre_latest)
                 adir = Path(art.download())
-                b_payload = torch.load(str(adir / "backbone.pt"), map_location="cpu", weights_only=False)
-                h_payload = torch.load(str(adir / "pretrain_head.pt"), map_location="cpu", weights_only=False)
+                b_payload = torch.load(
+                    str(adir / "backbone.pt"), map_location="cpu", weights_only=False
+                )
+                h_payload = torch.load(
+                    str(adir / "pretrain_head.pt"),
+                    map_location="cpu",
+                    weights_only=False,
+                )
                 model.backbone.load_state_dict(b_payload["state_dict"], strict=True)
                 model.head.load_state_dict(h_payload["state_dict"], strict=True)
                 loaded_resume = True
             except Exception:
-                logger.exception("Failed to load %s from W&B; trying local resume exports", pre_latest)
+                logger.exception(
+                    "Failed to load %s from W&B; trying local resume exports",
+                    pre_latest,
+                )
         if not loaded_resume:
             b_local = Path(config.model.pretrain_checkpoint_dir) / "backbone_last.pt"
-            h_local = Path(config.model.pretrain_checkpoint_dir) / "pretrain_head_last.pt"
+            h_local = (
+                Path(config.model.pretrain_checkpoint_dir) / "pretrain_head_last.pt"
+            )
             if b_local.exists() and h_local.exists():
-                logger.info("Resuming pretrain from local exports: %s, %s", b_local, h_local)
-                b_payload = torch.load(str(b_local), map_location="cpu", weights_only=False)
-                h_payload = torch.load(str(h_local), map_location="cpu", weights_only=False)
+                logger.info(
+                    "Resuming pretrain from local exports: %s, %s", b_local, h_local
+                )
+                b_payload = torch.load(
+                    str(b_local), map_location="cpu", weights_only=False
+                )
+                h_payload = torch.load(
+                    str(h_local), map_location="cpu", weights_only=False
+                )
                 model.backbone.load_state_dict(b_payload["state_dict"], strict=True)
                 model.head.load_state_dict(h_payload["state_dict"], strict=True)
 

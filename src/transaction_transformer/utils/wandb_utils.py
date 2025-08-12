@@ -20,16 +20,16 @@ def _project_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
-def init_wandb(config: Any, job_type: str, tags: Optional[list[str]] = None) -> Optional[Any]:
+def init_wandb(
+    config: Any, job_type: str, tags: Optional[list[str]] = None
+) -> wandb.Run:
     """
-    Initialize a single W&B run and return it. Returns None if config disables W&B.
+    Initialize a single W&B run and return it.
 
     The function is intentionally minimal. We do NOT change the global step or
     define custom metric steps globally. We simply include "epoch" in every log
     call elsewhere so that charts can use epoch as an x-axis when desired.
     """
-    if not getattr(config.metrics, "wandb", False):
-        return None
 
     entity = getattr(config.metrics, "wandb_entity", None)
     run = wandb.init(
@@ -41,8 +41,6 @@ def init_wandb(config: Any, job_type: str, tags: Optional[list[str]] = None) -> 
         tags=tags or [],
     )
     return run
-
-
 
 
 def download_artifact(
@@ -63,8 +61,10 @@ def download_artifact(
         adir = Path(art.download(root=str(root) if root is not None else None))
         return adir
     api = wandb.Api()
-    art = api.artifact(artifact_ref, type=type) if type is not None else api.artifact(artifact_ref)
+    art = (
+        api.artifact(artifact_ref, type=type)
+        if type is not None
+        else api.artifact(artifact_ref)
+    )
     adir = Path(art.download(root=str(root) if root is not None else None))
     return adir
-
-

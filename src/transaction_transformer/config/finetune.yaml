@@ -7,51 +7,46 @@ model:
   log_dir: "logs"
   
   field_transformer:
-    d_model: 72
+    d_model: 64
     n_heads: 8
     depth: 1
-    ffn_mult: 4
+    ffn_mult: 1
     dropout: 0.1
     layer_norm_eps: 1.0e-6
-    norm_first: false
+    norm_first: true
   
   sequence_transformer:
-    d_model: 1080
-    n_heads: 12
-    depth: 12
-    ffn_mult: 4
+    d_model: 64
+    n_heads: 8
+    depth: 2
+    ffn_mult: 1
     dropout: 0.1
     layer_norm_eps: 1.0e-6
-    norm_first: false
+    norm_first: true
   
   classification:
-    hidden_dim: 512
+    hidden_dim: 64
     depth: 2  # Number of hidden layers in the MLP. 0 is a linear layer
     dropout: 0.1
     output_dim: 1
 
   embedding:
-    emb_dim: 72
+    emb_dim: 64
     dropout: 0.1
     padding_idx: 0
     freq_encoding_L: 8
-    mask_token_init_std: 0.02
-  
   training:
-    total_epochs: 10
-    batch_size: 128 
+    total_epochs: 3
+    batch_size: 256 
     learning_rate: 5.0e-5
     model_type: "mlm"  # "mlm" or "ar"
     optimizer: "adamw"
     scheduler: "cosine"
-    mixed_precision: true
-    amp_dtype: bf16
-    grad_clip_norm: 1.0
     early_stopping_patience: 5
-    max_batches_per_epoch: null  # null for full epoch; integer for debug cap
-    device: "cuda"
+    max_batches_per_epoch: 50  # null for full epoch; integer for debug cap
     num_workers: 4
     positive_weight: 9.08  # Weight for positive (fraud) class. if 1.0, calculate from data
+    use_amp: true
     # Finetune startup / resume control (deprecated in favor of W&B artifacts)
     resume: false
     resume_path: null
@@ -70,7 +65,7 @@ model:
     # Or use sqrt(negative_samples / positive_samples) for less aggressive weighting
   
   data:
-    preprocessed_path: "data/processed/full_processed.pt"  # local override bundle (optional)
+    preprocessed_path: "data/processed/"  
     use_local_inputs: false
     raw_csv_path: "data/raw/card_transaction.v1.csv"
     raw_artifact_name: "raw-card-transactions-v1"
@@ -86,12 +81,7 @@ model:
     ignore_idx: -100
 
 metrics:
-  run_name: finetune
-  wandb: true
+  run_name: debug-finetune
   wandb_project: "transaction-transformer"
-  wandb_entity: null
-  seed: 42
-  deterministic: false
-  log_gradients: false
-  log_parameters: false
+
 #TODO go through and remove the parameters that are not used

@@ -27,5 +27,3 @@ class PretrainingModel(nn.Module):
     def forward(self, cat: LongTensor, cont: Tensor, row_type: int = 0):
         embeddings = self.backbone(cat, cont, row_type)  # (B, L, M)
         return self.head(embeddings)  # dict[name]: (B, L, V_field)
-
-

@@ -35,7 +35,9 @@ class Backbone(nn.Module):
             schema=schema,
             config=config,
         )
-        self.causal = config.training.model_type == "ar"  # causal masking for AR training; MLM is bidirectional
+        self.causal = (
+            config.training.model_type == "ar"
+        )  # causal masking for AR training; MLM is bidirectional
 
         self.field_transformer = FieldTransformer(config.field_transformer)
 
@@ -63,5 +65,3 @@ class Backbone(nn.Module):
         )  # (B, L, M)
         seq_embeddings = self.sequence_transformer(row_embeddings)  # (B, L, M)
         return seq_embeddings  # (B, L, M)
-
-

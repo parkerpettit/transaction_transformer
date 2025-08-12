@@ -14,7 +14,7 @@ from .components import (
     SequenceTransformer,
     PretrainHead,
     ClassificationHead,
-    RowExpander
+    RowExpander,
 )
 
 __all__ = [
@@ -27,5 +27,5 @@ __all__ = [
     "SequenceTransformer",
     "PretrainHead",
     "ClassificationHead",
-    "RowExpander"
-] 
+    "RowExpander",
+]

@@ -37,12 +37,16 @@ def _setup_logging(job_name: str = "preprocess") -> Path:
     # Console handler (INFO)
     ch = logging.StreamHandler()
     ch.setLevel(logging.INFO)
-    ch.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(name)s | %(message)s"))
+    ch.setFormatter(
+        logging.Formatter("%(asctime)s | %(levelname)s | %(name)s | %(message)s")
+    )
 
     # File handler (DEBUG)
     fh = RotatingFileHandler(str(log_path), maxBytes=5_000_000, backupCount=3)
     fh.setLevel(logging.DEBUG)
-    fh.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(name)s | %(message)s"))
+    fh.setFormatter(
+        logging.Formatter("%(asctime)s | %(levelname)s | %(name)s | %(message)s")
+    )
 
     # Avoid duplicate handlers on re-entry
     root.handlers.clear()
@@ -67,8 +71,19 @@ def main():
     #                          COLUMN DEFINITIONS
     # ---------------------------------------------------------------------
     cat_features = [
-        "User", "Card", "Use Chip", "Merchant Name", "Merchant City",
-        "Merchant State", "Zip", "MCC", "Errors?", "Year", "Month", "Day", "Hour",
+        "User",
+        "Card",
+        "Use Chip",
+        "Merchant Name",
+        "Merchant City",
+        "Merchant State",
+        "Zip",
+        "MCC",
+        "Errors?",
+        "Year",
+        "Month",
+        "Day",
+        "Hour",
     ]
     cont_features = ["Amount"]
 
@@ -77,17 +92,24 @@ def main():
     # ---------------------------------------------------------------------
     # Load config to determine artifact behavior
     cfg = ConfigManager(config_path="pretrain.yaml").config
-    run = init_wandb(cfg, job_type="preprocess", tags=["data"])  # may be None when disabled
-    logger.info("Config loaded | wandb_enabled=%s | project=%s", bool(cfg.metrics.wandb), cfg.metrics.wandb_project)
+    run = init_wandb(
+        cfg, job_type="preprocess", tags=["data"]
+    )  # may be None when disabled
+    logger.info(
+        "Config loaded | wandb_enabled=%s | project=%s",
+        bool(cfg.metrics.wandb),
+        cfg.metrics.wandb_project,
+    )
 
-    processed_dir = Path(cfg.model.data.preprocessed_path).parent
+    processed_dir = Path(cfg.model.data.preprocessed_path)
     processed_dir.mkdir(parents=True, exist_ok=True)
 
     # Artifact-first by default: consume raw dataset from W&B
     if not cfg.model.data.use_local_inputs and cfg.model.data.raw_artifact_name:
         ref = (
             f"{wandb.run.entity}/{wandb.run.project}/{cfg.model.data.raw_artifact_name}:latest"
-            if wandb.run else f"{cfg.model.data.raw_artifact_name}:latest"
+            if wandb.run
+            else f"{cfg.model.data.raw_artifact_name}:latest"
         )
         logger.info("Loading raw dataset from artifact: %s", ref)
         raw_art = wandb.run.use_artifact(ref) if wandb.run else None
@@ -95,30 +117,57 @@ def main():
         raw_root = Path(cfg.model.data.raw_csv_path).parent
         raw_root.mkdir(parents=True, exist_ok=True)
         t0 = time.time()
-        raw_dir = Path(raw_art.download(root=str(raw_root))) if raw_art is not None else Path(raw_root)
+        raw_dir = (
+            Path(raw_art.download(root=str(raw_root)))
+            if raw_art is not None
+            else Path(raw_root)
+        )
         logger.info("Raw artifact downloaded to %s in %.2fs", raw_dir, time.time() - t0)
         # Expect the CSV inside the artifact as 'card_transaction.v1.csv'
         raw_csv = raw_dir / Path(cfg.model.data.raw_csv_path).name
         full_train_raw, full_val_raw, full_test_raw = preprocess(raw_csv)
     else:
-        logger.info("Running initial CSV preprocessing from local CSV: %s", cfg.model.data.raw_csv_path)
-        full_train_raw, full_val_raw, full_test_raw = preprocess(Path(cfg.model.data.raw_csv_path))
+        logger.info(
+            "Running initial CSV preprocessing from local CSV: %s",
+            cfg.model.data.raw_csv_path,
+        )
+        full_train_raw, full_val_raw, full_test_raw = preprocess(
+            Path(cfg.model.data.raw_csv_path)
+        )
 
     logger.info("Creating legit-only splits ...")
-    legit_train_raw: pd.DataFrame = cast(pd.DataFrame, full_train_raw.loc[full_train_raw["is_fraud"] == 0].copy().reset_index(drop=True))
-    legit_val_raw: pd.DataFrame = cast(pd.DataFrame, full_val_raw.loc[full_val_raw["is_fraud"] == 0].copy().reset_index(drop=True))
-    legit_test_raw: pd.DataFrame = cast(pd.DataFrame, full_test_raw.loc[full_test_raw["is_fraud"] == 0].copy().reset_index(drop=True))
+    legit_train_raw: pd.DataFrame = cast(
+        pd.DataFrame,
+        full_train_raw.loc[full_train_raw["is_fraud"] == 0]
+        .copy()
+        .reset_index(drop=True),
+    )
+    legit_val_raw: pd.DataFrame = cast(
+        pd.DataFrame,
+        full_val_raw.loc[full_val_raw["is_fraud"] == 0].copy().reset_index(drop=True),
+    )
+    legit_test_raw: pd.DataFrame = cast(
+        pd.DataFrame,
+        full_test_raw.loc[full_test_raw["is_fraud"] == 0].copy().reset_index(drop=True),
+    )
     assert legit_train_raw["is_fraud"].sum() == 0
 
     logger.info(
         "Split sizes (rows) | full_train=%d full_val=%d full_test=%d | legit_train=%d legit_val=%d legit_test=%d",
-        len(full_train_raw), len(full_val_raw), len(full_test_raw), len(legit_train_raw), len(legit_val_raw), len(legit_test_raw)
+        len(full_train_raw),
+        len(full_val_raw),
+        len(full_test_raw),
+        len(legit_train_raw),
+        len(legit_val_raw),
+        len(legit_test_raw),
     )
 
     # ---------------------------------------------------------------------
     #            BUILD ONE SCHEMA (LEGIT TRAIN) AND REUSE EVERYWHERE
     # ---------------------------------------------------------------------
-    logger.info("Fitting encoders and scaler on legit TRAIN only (single schema for all datasets)")
+    logger.info(
+        "Fitting encoders and scaler on legit TRAIN only (single schema for all datasets)"
+    )
     cat_encoders = get_encoders(legit_train_raw, cat_features)
     scaler = get_scaler(legit_train_raw, cont_features)
 
@@ -132,12 +181,20 @@ def main():
     full_val_norm = normalize(full_val_raw.copy(), scaler, cont_features)
     full_test_norm = normalize(full_test_raw.copy(), scaler, cont_features)
 
-    logger.info("Fitting per-feature quantile binners on normalized legit TRAIN | num_bins=%d", cfg.model.data.num_bins)
+    logger.info(
+        "Fitting per-feature quantile binners on normalized legit TRAIN | num_bins=%d",
+        cfg.model.data.num_bins,
+    )
     cont_binners: Dict[str, Any] = {}
     for feat in cont_features:
         t0 = time.time()
         cont_binners[feat] = build_quantile_binner(legit_train_norm[feat])  # type: ignore
-        logger.debug("Built binner for %s in %.2fs | bins=%d", feat, time.time() - t0, cont_binners[feat].num_bins)
+        logger.debug(
+            "Built binner for %s in %.2fs | bins=%d",
+            feat,
+            time.time() - t0,
+            cont_binners[feat].num_bins,
+        )
 
     schema = FieldSchema(
         cat_features=cat_features,
@@ -150,7 +207,9 @@ def main():
 
     logger.info("Applying categorical encoders to all splits using single schema")
     # Encode categorical features using the single schema
-    legit_train_df = encode_df(legit_train_norm, schema.cat_encoders, schema.cat_features)
+    legit_train_df = encode_df(
+        legit_train_norm, schema.cat_encoders, schema.cat_features
+    )
     legit_val_df = encode_df(legit_val_norm, schema.cat_encoders, schema.cat_features)
     legit_test_df = encode_df(legit_test_norm, schema.cat_encoders, schema.cat_features)
 
@@ -161,6 +220,7 @@ def main():
     # UNK diagnostics per split/feature
     try:
         from transaction_transformer.data.preprocessing.schema import UNK_ID
+
         def _log_unk(df: pd.DataFrame, name: str):
             for feat in schema.cat_features:
                 total = int(len(df))
@@ -168,12 +228,21 @@ def main():
                 ratio = (unk / total) if total > 0 else 0.0
                 if ratio > 0.05:
                     logger.warning(
-                        "UNK rate | split=%s feature=%s | count=%d ratio=%.4f", name, feat, unk, ratio
+                        "UNK rate | split=%s feature=%s | count=%d ratio=%.4f",
+                        name,
+                        feat,
+                        unk,
+                        ratio,
                     )
                 else:
                     logger.debug(
-                        "UNK rate | split=%s feature=%s | count=%d ratio=%.4f", name, feat, unk, ratio
+                        "UNK rate | split=%s feature=%s | count=%d ratio=%.4f",
+                        name,
+                        feat,
+                        unk,
+                        ratio,
                     )
+
         _log_unk(full_train_df, "full_train")
         _log_unk(full_val_df, "full_val")
         _log_unk(full_test_df, "full_test")
@@ -240,13 +309,33 @@ def main():
     # ---------------------------------------------------------------------
     try:
         import pandas as _pd
-        with _pd.option_context('display.max_columns', None, 'display.width', 200, 'display.max_colwidth', None):
-            logger.debug("FULL TRAIN head:\n%s", full_train_df.head().to_string(index=False))
-            logger.debug("FULL VAL head:\n%s", full_val_df.head().to_string(index=False))
-            logger.debug("FULL TEST head:\n%s", full_test_df.head().to_string(index=False))
-            logger.debug("LEGIT TRAIN head:\n%s", legit_train_df.head().to_string(index=False))
-            logger.debug("LEGIT VAL head:\n%s", legit_val_df.head().to_string(index=False))
-            logger.debug("LEGIT TEST head:\n%s", legit_test_df.head().to_string(index=False))
+
+        with _pd.option_context(
+            "display.max_columns",
+            None,
+            "display.width",
+            200,
+            "display.max_colwidth",
+            None,
+        ):
+            logger.debug(
+                "FULL TRAIN head:\n%s", full_train_df.head().to_string(index=False)
+            )
+            logger.debug(
+                "FULL VAL head:\n%s", full_val_df.head().to_string(index=False)
+            )
+            logger.debug(
+                "FULL TEST head:\n%s", full_test_df.head().to_string(index=False)
+            )
+            logger.debug(
+                "LEGIT TRAIN head:\n%s", legit_train_df.head().to_string(index=False)
+            )
+            logger.debug(
+                "LEGIT VAL head:\n%s", legit_val_df.head().to_string(index=False)
+            )
+            logger.debug(
+                "LEGIT TEST head:\n%s", legit_test_df.head().to_string(index=False)
+            )
     except Exception:
         logger.debug("Failed to log head() snapshots", exc_info=True)
 
@@ -254,11 +343,13 @@ def main():
     #                                SAVE
     # ---------------------------------------------------------------------
     logger.info("Logging preprocessed datasets and schema to W&B artifact ...")
-    run = wandb.run or init_wandb(cfg, job_type="preprocess", tags=["data"])  # idempotent
+    run = wandb.run or init_wandb(
+        cfg, job_type="preprocess", tags=["data"]
+    )  # idempotent
     processed = wandb.Artifact(
-        name="preprocessed-card-v1",
+        name="preprocessed-card",
         type="dataset",
-        description="Preprocessed splits, schema, encoders, binners, scaler for card v1",
+        description="Preprocessed splits, schema, encoders, binners, scaler for card dataset",
         metadata={
             "job_type": "preprocess",
             "created_at": time.time(),
@@ -266,24 +357,38 @@ def main():
     )
     # Write FULL dataframes as parquet directly into the artifact (binary mode)
     with processed.new_file("train.parquet", mode="wb") as f:
-        logger.debug("Writing file into artifact: train.parquet (%d rows)", len(full_train_df))
+        logger.debug(
+            "Writing file into artifact: train.parquet (%d rows)", len(full_train_df)
+        )
         full_train_df.to_parquet(f, index=False)
     with processed.new_file("val.parquet", mode="wb") as f:
-        logger.debug("Writing file into artifact: val.parquet (%d rows)", len(full_val_df))
+        logger.debug(
+            "Writing file into artifact: val.parquet (%d rows)", len(full_val_df)
+        )
         full_val_df.to_parquet(f, index=False)
     with processed.new_file("test.parquet", mode="wb") as f:
-        logger.debug("Writing file into artifact: test.parquet (%d rows)", len(full_test_df))
+        logger.debug(
+            "Writing file into artifact: test.parquet (%d rows)", len(full_test_df)
+        )
         full_test_df.to_parquet(f, index=False)
 
     # Also write LEGIT-only splits for pretraining convenience
     with processed.new_file("legit_train.parquet", mode="wb") as f:
-        logger.debug("Writing file into artifact: legit_train.parquet (%d rows)", len(legit_train_df))
+        logger.debug(
+            "Writing file into artifact: legit_train.parquet (%d rows)",
+            len(legit_train_df),
+        )
         legit_train_df.to_parquet(f, index=False)
     with processed.new_file("legit_val.parquet", mode="wb") as f:
-        logger.debug("Writing file into artifact: legit_val.parquet (%d rows)", len(legit_val_df))
+        logger.debug(
+            "Writing file into artifact: legit_val.parquet (%d rows)", len(legit_val_df)
+        )
         legit_val_df.to_parquet(f, index=False)
     with processed.new_file("legit_test.parquet", mode="wb") as f:
-        logger.debug("Writing file into artifact: legit_test.parquet (%d rows)", len(legit_test_df))
+        logger.debug(
+            "Writing file into artifact: legit_test.parquet (%d rows)",
+            len(legit_test_df),
+        )
         legit_test_df.to_parquet(f, index=False)
 
     # Save schema and helpers
@@ -328,15 +433,15 @@ def main():
     with processed.new_file("preprocess_meta.json", mode="w") as f:
         f.write(json.dumps(preprocess_meta, indent=2))
 
-
-
     # ---------------------------------------------------------------------
     #                         VERIFY DISTRIBUTIONS
     # ---------------------------------------------------------------------
     logger.info("Printing quantile bin distributions for verification (DEBUG) ...")
     import numpy as np
 
-    def print_bin_distributions(df: pd.DataFrame, schema: FieldSchema, dataset_name: str):
+    def print_bin_distributions(
+        df: pd.DataFrame, schema: FieldSchema, dataset_name: str
+    ):
         """Prints the bin counts for each continuous feature in a dataframe."""
         logger.debug("--- %s ---", dataset_name)
         for feat in schema.cont_features:
@@ -347,7 +452,7 @@ def main():
             if len(values) == 0:
                 logger.debug("Feature '%s': No non-NaN values, skipping.", feat)
                 continue
-            
+
             bin_ids = binner.bin(torch.from_numpy(values)).numpy()
             counts = np.bincount(bin_ids, minlength=binner.num_bins)
             logger.debug("Feature '%s' bin counts (total %d bins):", feat, len(counts))
@@ -364,16 +469,15 @@ def main():
     ]:
         print_bin_distributions(df, sc, name)
 
- 
     if run is not None:
         try:
             processed.add_file(str(log_file), name="preprocess.log")
             run.log_artifact(processed, aliases=["latest"])
-            logger.info("Logged preprocessed-card-v1 artifact with alias [latest]")
+            logger.info("Logged preprocessed-card artifact with alias [latest]")
         except Exception:
             logger.debug("Failed to upload log file to wandb", exc_info=True)
         wandb.finish()
 
+
 if __name__ == "__main__":
     main()
-
