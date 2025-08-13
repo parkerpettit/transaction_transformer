@@ -38,7 +38,6 @@ class MLMTabCollator(BaseTabCollator):
         # Each item: {"cat": (L,C) long, "cont": (L,F) float, "label": ... optional}
         cats = torch.stack([b["cat"] for b in batch], 0)  # (B,L,C)
         conts = torch.stack([b["cont"] for b in batch], 0)  # (B,L,F)
-        labels = torch.stack([b["label"] for b in batch], 0)  # (B,)
         B, L, C = cats.shape
         _, _, F = conts.shape
         device = cats.device
@@ -106,7 +105,6 @@ class MLMTabCollator(BaseTabCollator):
             "cont": cont_in,  # (B,L,F) float (NaN where masked)
             "labels_cat": labels_cat,  # (B,L,C) long; ignore_index where not masked
             "labels_cont": labels_cont,  # (B,L,F) long; ignore_index where not masked
-            "downstream_label": labels,  # passthrough if you need it
         }
 
 
@@ -126,7 +124,6 @@ class ARTabCollator(BaseTabCollator):
         # Each item: {"cat": (L,C) long, "cont": (L,F) float, "label": ... optional}
         cats = torch.stack([b["cat"] for b in batch], 0)  # (B,L,C)
         conts = torch.stack([b["cont"] for b in batch], 0)  # (B,L,F)
-        labels = torch.stack([b["label"] for b in batch], 0)  # (B,L)
         B, L, C = cats.shape
         _, _, F = conts.shape
         device = cats.device
@@ -166,19 +163,8 @@ class ARTabCollator(BaseTabCollator):
             "cont": cont_in,  # (B,L,F) float - input sequence
             "labels_cat": labels_cat,  # (B,L,C) long - shifted targets
             "labels_cont": labels_cont,  # (B,L,F) long - shifted targets (binned)
-            "downstream_label": labels,  # (B,L) - passthrough if you need it
         }
 
-
-# Keep the old function for backward compatibility
-def collate_fn_autoregressive(
-    batch: List[Dict[str, torch.Tensor]],
-) -> Dict[str, torch.Tensor]:
-    """Legacy autoregressive collator function."""
-    cats = torch.stack([(b["cat"]) for b in batch], dim=0)
-    conts = torch.stack([(b["cont"]) for b in batch], dim=0)
-    labels = torch.stack([b["label"] for b in batch], dim=0)
-    return {"cat": cats, "cont": conts, "label": labels}
 
 
 class FinetuneCollator(BaseTabCollator):

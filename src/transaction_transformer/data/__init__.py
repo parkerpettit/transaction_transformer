@@ -9,7 +9,6 @@ from .collator import (
     MLMTabCollator,
     ARTabCollator,
     BaseTabCollator,
-    collate_fn_autoregressive,
 )
 from .preprocessing.schema import (
     FieldSchema,
@@ -26,7 +25,6 @@ __all__ = [
     "MLMTabCollator",
     "ARTabCollator",
     "BaseTabCollator",
-    "collate_fn_autoregressive",
     "FieldSchema",
     "get_encoders",
     "get_scaler",
