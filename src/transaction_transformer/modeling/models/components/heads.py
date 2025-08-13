@@ -81,7 +81,7 @@ class ClassificationHead(nn.Module):
         )
 
     def forward(self, x: Tensor) -> Tensor:
-        return self.mlp(x)  # (B, L, M) -> (B, 1)
+        return self.mlp(x[:, -1, :])  # (B, L, M) -> (B, 1)
 
 
 # -------------------------------------------------------------------------------------- #

@@ -50,15 +50,15 @@ class CheckpointManager:
     ) -> None:
         if wandb_run is None:
             return
-        base_name = f"pretrained-backbone-{model_type}"
+        base_name = f"{self.stage}-{model_type}"
         artifact = wandb.Artifact(base_name, type="model", metadata={"model_type": model_type, "epoch": epoch})
         artifact.add_file(str(backbone_path), name="backbone.pt")
         artifact.add_file(
             str(head_path),
-            name=("pretrain_head.pt" if self.stage == "pretrain" else "finetune_head.pt"),
+            name="head.pt",
         )
         artifact.add_file(str(optimizer_scheduler_path), name="optimizer_scheduler.pt")
-        # Optionally attach stage logs to the model artifact (pretrain)
+        # Attach stage logs to the model artifact 
         if self.stage == "pretrain":
             log_file = os.environ.get("TT_PRETRAIN_LOG_FILE")
             if log_file and Path(log_file).exists():

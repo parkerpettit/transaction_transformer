@@ -37,15 +37,6 @@ class Pretrainer(BaseTrainer):
             optimizer,
             scheduler,
         )
-        # Use CrossEntropyLoss for both AR and MLM - it handles everything!
-        # For categorical features: use built-in label smoothing
-        self.cat_loss_fn = nn.CrossEntropyLoss(
-            ignore_index=config.model.data.ignore_idx, label_smoothing=0.1
-        )
-        # For continuous features: we'll still use custom neighborhood smoothing
-        self.cont_loss_fn = nn.CrossEntropyLoss(
-            ignore_index=config.model.data.ignore_idx
-        )
         self.total_features = len(self.schema.cat_features) + len(
             self.schema.cont_features
         )
@@ -53,64 +44,47 @@ class Pretrainer(BaseTrainer):
         print(f"Total features: {self.total_features}")
         print(f"Model type: {config.model.training.model_type}")
 
-    def compute_loss(
-        self,
-        logits: Dict[str, torch.Tensor],
-        labels_cat: torch.Tensor,
-        labels_cont: torch.Tensor,
-    ) -> torch.Tensor:
-        # Unified loss computation for both AR and MLM!
-        return self.compute_unified_loss(logits, labels_cat, labels_cont)
 
-    def compute_unified_loss(
-        self,
-        logits: Dict[str, torch.Tensor],
-        labels_cat: torch.Tensor,
-        labels_cont: torch.Tensor,
-    ) -> torch.Tensor:
-        """Unified loss computation for both AR and MLM.
+    def compute_loss(self, logits, labels_cat, labels_cont) -> torch.Tensor:
+        total_sum = torch.tensor(0.0, device=self.device)
+        total_valid = torch.tensor(0.0, device=self.device)
+        ignore_idx = self.config.model.data.ignore_idx
 
-        Args:
-            logits: dict[name] : (B, L, V_f) - predictions at each position
-            labels_cat: (B, L, C) - categorical targets (original for MLM, shifted for AR)
-            labels_cont: (B, L, F) - continuous targets (binned)
-
-        Returns:
-            Average loss across all features
-        """
-        total_loss = torch.tensor(0.0, device=self.device)
-
-        # Handle categorical features with built-in label smoothing
+        # Categorical (hard targets)
         for f_idx, name in enumerate(self.schema.cat_features):
-            logits_f = logits[name]  # (B, L, V)
-            labels_f = labels_cat[:, :, f_idx]  # (B, L)
-            # CrossEntropyLoss handles ignore_index and label_smoothing automatically
-            total_loss += self.cat_loss_fn(logits_f.flatten(0, 1), labels_f.flatten())
+            logits_f = logits[name].flatten(0, 1)         # (B*L, V)
+            labels_f = labels_cat[:, :, f_idx].flatten()  # (B*L,)
+            valid = labels_f != ignore_idx
 
-        # Handle continuous features with custom neighborhood smoothing
+            # per-position CE; zeros for ignored when using ignore_index with 'none'
+            per_loss = F.cross_entropy(
+                logits_f, labels_f,
+                reduction="none",
+                ignore_index=ignore_idx,
+                label_smoothing=0.1,
+            )                                             # (B*L,)
+            total_sum += per_loss[valid].sum()
+            total_valid += valid.sum()
+
+        # Continuous (soft targets)
         for f_idx, name in enumerate(self.schema.cont_features):
-            logits_f = logits[name]  # (B, L, V)
-            labels_f = labels_cont[:, :, f_idx]  # (B, L)
-
-            V = self.schema.cont_binners[name].num_bins
-            lbl = labels_f.flatten()  # (B*L,)
-            logits_flat = logits_f.flatten(0, 1)  # (B*L, V)
-
-            mask = lbl != self.config.model.data.ignore_idx
-            if mask.any():
+            logits_f = logits[name].flatten(0, 1)         # (B*L, V)
+            labels_f = labels_cont[:, :, f_idx].flatten() # (B*L,)
+            valid = labels_f != ignore_idx
+            if valid.any():
+                V = self.schema.cont_binners[name].num_bins
                 soft_targets = self._vectorized_neighborhood_smoothing(
-                    labels=lbl[mask], num_bins=V, epsilon=0.1, neighborhood=5
-                ).to(dtype=logits_flat.dtype)
+                    labels=labels_f[valid], num_bins=V, epsilon=0.1, neighborhood=5
+                ).to(dtype=logits_f.dtype)                # (N_valid, V)
 
-                # CrossEntropyLoss with soft targets needs the full target tensor
-                full_soft_targets = torch.zeros_like(
-                    logits_flat, dtype=logits_flat.dtype
-                )
-                full_soft_targets[mask] = soft_targets
+                # per-position CE with soft/probability targets
+                per_loss = F.cross_entropy(
+                    logits_f[valid], soft_targets, reduction="none"
+                )                                         # (N_valid,)
+                total_sum += per_loss.sum()
+                total_valid += valid.sum()
 
-                total_loss += self.cont_loss_fn(logits_flat, full_soft_targets)
-
-        return total_loss / self.total_features
+        return total_sum / total_valid.clamp_min(1)
 
     def _vectorized_neighborhood_smoothing(
         self, labels: torch.Tensor, num_bins: int, epsilon: float, neighborhood: int
@@ -196,7 +170,7 @@ class Pretrainer(BaseTrainer):
             ):
                 break
 
-            with torch.autocast(device_type=self.device.type, enabled=self.config.model.training.use_amp):
+            with self.autocast:
                 if batch_idx == 0:
                     print(f"Using {self.config.model.training.use_amp} for batch {batch_idx}")
                 logits, labels_cat, labels_cont = self.forward_pass(batch)
@@ -250,7 +224,7 @@ class Pretrainer(BaseTrainer):
                     and batch_idx >= max_batches
                 ):
                     break
-                with torch.autocast(device_type=self.device.type, enabled=self.config.model.training.use_amp):
+                with self.autocast:
                     logits, labels_cat, labels_cont = self.forward_pass(batch)
                     loss = self.compute_loss(logits, labels_cat, labels_cont)
 

@@ -146,7 +146,7 @@ def main():
     config = config_manager.config
     print("Configuration loaded")
 
-    log_path = _setup_logging()
+    log_path = _setup_logging("finetune")
     os.environ["TT_FINETUNE_LOG_FILE"] = str(log_path)
 
     # Init W&B (used to resolve artifacts below)
@@ -169,14 +169,26 @@ def main():
 
     logger.info("Initializing model")
     model = FraudDetectionModel(config.model, schema)
-    
-    pretrained_backbone_artifact = run.use_artifact(f"pretrained-backbone-{config.model.training.model_type}:latest")
-    logger.info("Downloading pretrained backbone: %s", f"pretrained-backbone-{config.model.training.model_type}:latest")
-    pretrained_backbone_dir = Path(pretrained_backbone_artifact.download())
+    if config.model.training.resume:
+        pretrained_artifact = run.use_artifact(f"finetune-{config.model.training.model_type}:latest")
+        logger.info("Resuming from finetune artifact: %s", f"finetune-{config.model.training.model_type}:latest")
+        pretrained_dir = Path(pretrained_artifact.download())
 
-    logger.info("Loading weights from pretrained backbone %s", pretrained_backbone_dir / "backbone.pt")
-    backbone = torch.load(pretrained_backbone_dir / "backbone.pt", map_location="cpu", weights_only=False)
-    model.backbone.load_state_dict(backbone["state_dict"], strict=True)
+        logger.info("Loading weights from finetune backbone %s", pretrained_dir / "backbone.pt")
+        backbone = torch.load(pretrained_dir / "backbone.pt", map_location="cpu", weights_only=False)
+        model.backbone.load_state_dict(backbone["state_dict"], strict=True)
+
+        logger.info("Loading weights from finetune head %s", pretrained_dir / "head.pt")
+        head = torch.load(pretrained_dir / "head.pt", map_location="cpu", weights_only=False)
+        model.head.load_state_dict(head["state_dict"], strict=True)
+    else:
+        pretrained_artifact = run.use_artifact(f"pretrain-{config.model.training.model_type}:latest")
+        logger.info("Downloading pretrained artifact: %s", f"pretrain-{config.model.training.model_type}:latest")
+        pretrained_dir = Path(pretrained_artifact.download())
+
+        logger.info("Loading weights from pretrained backbone %s", pretrained_dir / "backbone.pt")
+        backbone = torch.load(pretrained_dir / "backbone.pt", map_location="cpu", weights_only=False)
+        model.backbone.load_state_dict(backbone["state_dict"], strict=True)
     
     device = torch.device(config.get_device())
     model.to(device)

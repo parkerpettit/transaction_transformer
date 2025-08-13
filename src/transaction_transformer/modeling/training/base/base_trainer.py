@@ -37,6 +37,7 @@ class BaseTrainer(ABC):
         self.optimizer = optimizer
         self.scheduler = scheduler
         self.scaler = torch.amp.GradScaler(enabled=config.model.training.use_amp) # type: ignore
+        self.autocast = torch.autocast(device_type=self.device.type, enabled=config.model.training.use_amp, dtype=torch.bfloat16)
         self.schema = schema
         self.config = config
         self.logger = logging.getLogger(__name__)
@@ -59,7 +60,7 @@ class BaseTrainer(ABC):
         self.patience = config.model.training.early_stopping_patience
         # Training state
         self.current_epoch = 0
-        self.current_step = 0
+        self.current_step = 0   
         self.best_val_loss = float("inf")
         self.bar_fmt = (
             "{l_bar}{bar:10}| "  # visual bar
@@ -69,6 +70,7 @@ class BaseTrainer(ABC):
             "{rate_fmt} | "  # batches / sec
             "{postfix}"  # losses go here
         )
+        
 
 
 
@@ -153,6 +155,8 @@ class BaseTrainer(ABC):
             # Save local exports (overwrite) and log a W&B artifact version for this epoch
             backbone = getattr(self.model, "backbone", None)
             head = getattr(self.model, "head", None)
+            print(backbone)
+            print(head)
             if backbone is not None and head is not None:
                 try:
                     self.checkpoint_manager.save_and_log_epoch(
@@ -173,65 +177,4 @@ class BaseTrainer(ABC):
             self.logger.info(f"Train Loss: {train_metrics.get('loss', 0):.4f}")
             self.logger.info(f"Val Loss: {val_metrics.get('loss', 0):.4f}")
             self.logger.info("-" * 50)
-
-    def label_smoothing(
-        self, targets: torch.Tensor, num_classes: int, epsilon: float = 0.1
-    ) -> torch.Tensor:
-        """
-        Apply label smoothing to categorical targets.
-        Args:
-            targets: (N,) int64 tensor of class indices (ground truth, 0 <= v < num_classes)
-            num_classes: int, number of classes (q_j)
-            epsilon: float, smoothing parameter (epsilon)
-        Returns:
-            smoothed: (N, num_classes) float tensor, each row is a smoothed probability vector
-        Implements:
-            [p(v)]_l = 1-epsilon if l==v else epsilon/(num_classes-1)
-        """
-        N = targets.shape[0]
-        smoothed = torch.full(
-            (N, num_classes),
-            epsilon / (num_classes - 1),
-            device=targets.device,
-            dtype=torch.float32,
-        )
-        smoothed.scatter_(1, targets.unsqueeze(1), 1.0 - epsilon)
-        return smoothed
-
-    def neighbor_label_smoothing(
-        self,
-        targets: torch.Tensor,
-        num_bins: int,
-        epsilon: float = 0.1,
-        neighborhood: int = 5,
-    ) -> torch.Tensor:
-        """
-        Apply neighborhood label smoothing to quantized (binned) targets.
-        Args:
-            targets: (N,) int64 tensor of bin indices (ground truth, 0 <= b < num_bins)
-            num_bins: int, number of bins (V_j)
-            epsilon: float, smoothing parameter (epsilon)
-            neighborhood: int, neighborhood size on each side (default 5, so total 10 neighbors)
-        Returns:
-            smoothed: (N, num_bins) float tensor, each row is a smoothed probability vector
-        Implements:
-            [p(v)]_l = 1-epsilon if l==b
-                       epsilon/10 if l in [b-5, ..., b+5] and l != b
-                       0 otherwise
-        """
-        N = targets.shape[0]
-        smoothed = torch.zeros(
-            (N, num_bins), device=targets.device, dtype=torch.float32
-        )
-        # Main bin
-        smoothed.scatter_(1, targets.unsqueeze(1), 1.0 - epsilon)
-        # Neighborhood bins (excluding main bin)
-        for offset in range(-neighborhood, neighborhood + 1):
-            if offset == 0:
-                continue
-            neighbor_idx = targets + offset
-            valid = (neighbor_idx >= 0) & (neighbor_idx < num_bins)
-            rows = torch.arange(N, device=targets.device)[valid]
-            cols = neighbor_idx[valid]
-            smoothed[rows, cols] = epsilon / (2 * neighborhood)
-        return smoothed
+        wandb.finish()

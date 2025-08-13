@@ -50,7 +50,6 @@ model:
     max_batches_per_epoch: 50  # null for full epoch; integer for debug cap
     num_workers: 4
     resume: false
-    resume_path: null
     use_amp: true
   data:
     preprocessed_path: "data/processed/"
@@ -70,5 +69,6 @@ model:
 
 metrics:
   run_name: debug-pretrain
+  run_id: null
   wandb_project: "transaction-transformer"
 

@@ -320,45 +320,55 @@ class MetricsTracker:
         #         "val_predictions_table": pred_tbl,
         #     })
 
+        
+        
         if self.wandb_run:
-            # Precision/Recall/F1 vs threshold curve (dense sampling)
-            thresholds_dense = np.linspace(0.0, 1.0, 201)
-            prf_rows = []
-            prec_list, rec_list, f1_list = [], [], []
+            # 1) Geometric progression (constant ratio)
+            thresholds_dense = np.geomspace(0.00001, 1.0, 500)
+            rows = []
+            thresholds_dense = np.concatenate([[0.0], thresholds_dense])
             for th in thresholds_dense:
                 preds = (probs_np >= th).astype(np.int8)
                 precision, recall, f1, _ = precision_recall_fscore_support(
-                    labels_np, preds, average="binary", zero_division=0.0 # type: ignore
+                    labels_np, preds, average="binary", zero_division=np.nan # type: ignore
                 )
-                prf_rows.append(
-                    [
-                        int(self.current_epoch),
-                        float(th),
-                        float(precision),
-                        float(recall),
-                        float(f1),
-                    ]
-                )
-                prec_list.append(float(precision))
-                rec_list.append(float(recall))
-                f1_list.append(float(f1))
-            prf_tbl = wandb.Table(
-                columns=["epoch", "threshold", "precision", "recall", "f1"],
-                data=prf_rows,
-            )
-            self.wandb_run.log(
-                {
-                    "epoch": self.current_epoch,
-                    "val_prf_curve_table": prf_tbl,
-                    "val_prf_curve": wandb.plot.line_series(
-                        xs=thresholds_dense.tolist(),
-                        ys=[prec_list, rec_list, f1_list],
-                        keys=["precision", "recall", "f1"],
-                        title="Validation Precision/Recall/F1 vs Threshold",
-                        xname="threshold",
-                    ),
-                }
-            )
+                # False Positive Rate: FP / (FP + TN)
+                neg_mask = labels_np == 0
+                if np.any(neg_mask):
+                    fp = np.sum((preds == 1) & neg_mask)
+                    tn_fp = np.sum(neg_mask)
+                    fpr = float(fp) / float(tn_fp)
+                else:
+                    fpr = 0.0
+                rows.append({
+                    "epoch": int(self.current_epoch),
+                    "threshold": float(th),
+                    "precision": float(precision),
+                    "recall": float(recall),
+                    "f1": float(f1),
+                    "fpr": float(fpr),
+                })
+
+            prf_df = pd.DataFrame(rows)
+            prf_tbl = wandb.Table(dataframe=prf_df)
+            fields = {"epoch": "epoch", "threshold": "threshold"}
+            string_fields = {"title": "Precision / Recall / F1 / FPR vs Threshold", "xname": "Threshold"}
+
+
+
+            self.wandb_run.log({
+                "epoch": int(self.current_epoch),
+                "val_prf_curve_table": prf_tbl,
+                "val_prf_curve": wandb.plot_table(
+                    vega_spec_name="mit_itau_group_3/threshold_prf_by_epoch",  # replace with your saved preset name
+                    data_table=prf_tbl,
+                    fields=fields,
+                    string_fields=string_fields,
+                ),
+            })
+
+            
+            
 
         # # Log a compact threshold metrics table per epoch
         # if self.wandb_run and rows_for_table:

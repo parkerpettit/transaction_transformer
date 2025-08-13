@@ -38,6 +38,7 @@ class Evaluater:
         self.loss_fn = nn.BCEWithLogitsLoss()
         self.schema = schema
         self.config = config
+        self.autocast = torch.autocast(device_type=self.device.type, enabled=config.model.training.use_amp, dtype=torch.bfloat16)
         # Initialize components
         self.metrics = MetricsTracker(ignore_index=self.config.model.data.ignore_idx)
         self.metrics.class_names = ["non-fraud", "fraud"]
@@ -97,7 +98,7 @@ class Evaluater:
                 )
                 model.backbone.load_state_dict(backbone["state_dict"], strict=True)
                 head = torch.load(
-                    artifact_dir / "finetune_head.pt", map_location="cpu", weights_only=False
+                    artifact_dir / "head.pt", map_location="cpu", weights_only=False
                 )
                 model.head.load_state_dict(head["state_dict"], strict=True)
             else:
@@ -130,7 +131,7 @@ class Evaluater:
         total_loss = 0.0
         batch_idx = 0
         for batch in self.val_bar:
-            with torch.autocast(device_type=self.device.type):
+            with self.autocast:
                 logits, labels = self.forward_pass(model, batch)
                 loss = self.compute_loss(logits, labels)  # (B,)
             self.metrics.update_binary_classification(logits, labels)

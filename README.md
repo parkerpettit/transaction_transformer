@@ -70,12 +70,12 @@ pretrain
 Quick overrides (examples supported by the CLI):
 ```bash
 # Choose objective and make a short run
-pretrain --config pretrain.yaml --training-mode ar --batch-size 32 --total-epochs 1
+pretrain --config pretrain.yaml --model_type ar --batch-size 32 --total-epochs 1
 
 # Equivalent module form
 python -m transaction_transformer.modeling.training.pretrain \
   --config pretrain.yaml \
-  --training-mode mlm \
+  --model_type mlm \
   --batch-size 32 \
   --total-epochs 1
 ```

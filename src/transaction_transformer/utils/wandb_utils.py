@@ -21,7 +21,7 @@ def _project_root() -> Path:
 
 
 def init_wandb(
-    config: Any, job_type: str, tags: Optional[list[str]] = None
+    config: Any, job_type: str, tags: Optional[list[str]] = None, run_id: Optional[str] = None
 ) -> wandb.Run:
     """
     Initialize a single W&B run and return it.
@@ -39,6 +39,8 @@ def init_wandb(
         job_type=job_type,
         config=config.to_dict() if hasattr(config, "to_dict") else None,
         tags=tags or [],
+        resume="allow",
+        id=run_id
     )
     return run
 

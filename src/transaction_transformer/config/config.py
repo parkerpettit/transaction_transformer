@@ -176,6 +176,7 @@ class MetricsConfig:
     """Configuration for experiment tracking and logging."""
 
     run_name: str = "pretrain"
+    run_id: Optional[str] = None
 
     # Logging
     wandb: bool = True
@@ -289,7 +290,7 @@ class ConfigManager:
 
         # Model parameters
         parser.add_argument(
-            "--training-mode",
+            "--model-type",
             type=str,
             choices=["mlm", "ar"],
             help="Pretraining model_type (MLM or autoregressive)",
@@ -354,7 +355,7 @@ class ConfigManager:
         # Map CLI args to config structure
         cli_mapping = {
             "mode": "model.mode",
-            "training_stage": "model.training.model_type",
+            "model_type": "model.training.model_type",
             "batch_size": "model.training.batch_size",
             "learning_rate": "model.training.learning_rate",
             "total_epochs": "model.training.total_epochs",

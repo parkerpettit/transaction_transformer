@@ -47,9 +47,7 @@ model:
     num_workers: 4
     positive_weight: 9.08  # Weight for positive (fraud) class. if 1.0, calculate from data
     use_amp: true
-    # Finetune startup / resume control (deprecated in favor of W&B artifacts)
     resume: false
-    resume_path: null
     from_scratch: false
     # Prefer W&B artifact; if omitted, code will auto-discover the latest pretrain artifact in this project.
     # You can still provide a local path to override.
@@ -82,6 +80,7 @@ model:
 
 metrics:
   run_name: debug-finetune
+  run_id: null
   wandb_project: "transaction-transformer"
 
 #TODO go through and remove the parameters that are not used

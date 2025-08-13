@@ -38,7 +38,7 @@ class MLMTabCollator(BaseTabCollator):
         # Each item: {"cat": (L,C) long, "cont": (L,F) float, "label": ... optional}
         cats = torch.stack([b["cat"] for b in batch], 0)  # (B,L,C)
         conts = torch.stack([b["cont"] for b in batch], 0)  # (B,L,F)
-        labels = torch.stack([b["label"] for b in batch], 0)  # (B,L)
+        labels = torch.stack([b["label"] for b in batch], 0)  # (B,)
         B, L, C = cats.shape
         _, _, F = conts.shape
         device = cats.device
@@ -62,6 +62,10 @@ class MLMTabCollator(BaseTabCollator):
         )  # (B, L, 1)
         mask_cat = field_mask_cat | row_mask.expand(-1, -1, C)  # (B, L, C)
         mask_cont = field_mask_cont | row_mask.expand(-1, -1, F)  # (B, L, F)
+
+        # Do not mask special categorical tokens: PAD=0, MASK=1, UNK=2
+        is_special = (cats == 0) | (cats == 1) | (cats == 2)
+        mask_cat = mask_cat & (~is_special)
 
         # 4) Build labels (vectorized)
         labels_cat = torch.full(
