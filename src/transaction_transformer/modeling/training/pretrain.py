@@ -203,6 +203,8 @@ def main():
         logger.info("Loading weights from pretrained head %s", pretrained_dir / "head.pt")
         head = torch.load(pretrained_dir / "head.pt", map_location="cpu", weights_only=False)
         model.head.load_state_dict(head["state_dict"], strict=True)
+    else:
+        logger.info("Starting from scratch")
     
     device = torch.device(config.get_device())
     model.to(device)
