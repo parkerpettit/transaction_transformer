@@ -92,6 +92,7 @@ def main():
     # ---------------------------------------------------------------------
     # Load config to determine artifact behavior
     cfg = ConfigManager(config_path="pretrain.yaml").config
+    cfg.metrics.run_name = "preprocess"
     run = init_wandb(
         cfg, job_type="preprocess", tags=["data"]
     )  # may be None when disabled

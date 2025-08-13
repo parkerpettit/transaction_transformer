@@ -153,6 +153,7 @@ def main():
     run = init_wandb(
         config, job_type="finetune", tags=[config.model.training.model_type, "finetune", f"use_amp={config.model.training.use_amp}"], run_id=config.metrics.run_id
     )
+    run.use_artifact("preprocessed-card:latest")
     dataset_dir = Path(run.use_artifact("preprocessed-card:latest").download())
     logger.info(f"Dataset directory: {dataset_dir}")
 

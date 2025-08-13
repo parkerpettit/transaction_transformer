@@ -62,6 +62,7 @@ class SequenceTransformer(nn.Module):
 
         # Auto-expanding causal mask cache
         self.is_causal = causal
+        print(f"is_causal: {self.is_causal}")
         self.register_buffer(
             "causal_mask", torch.empty(0, 0, dtype=torch.bool), persistent=False
         )
