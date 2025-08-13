@@ -340,8 +340,22 @@ class ConfigManager:
         # Experiment tracking
         parser.add_argument("--run-name", type=str, help="Run name")
         parser.add_argument("--seed", type=int, help="Random seed")
-        parser.add_argument("--use-amp", action="store_true", help="Use automatic mixed precision")
-        parser.add_argument("--no-use-amp", action="store_false", help="Do not use automatic mixed precision")
+
+        # AMP flags (mutually exclusive) sharing the same destination; default None so YAML controls unless overridden
+        amp_group = parser.add_mutually_exclusive_group()
+        amp_group.add_argument(
+            "--use-amp",
+            dest="use_amp",
+            action="store_true",
+            help="Use automatic mixed precision",
+        )
+        amp_group.add_argument(
+            "--no-use-amp",
+            dest="use_amp",
+            action="store_false",
+            help="Do not use automatic mixed precision",
+        )
+        parser.set_defaults(use_amp=None)
 
         return parser.parse_args()
 
@@ -377,7 +391,6 @@ class ConfigManager:
             "run_name": "metrics.run_name",
             "seed": "metrics.seed",
             "use_amp": "model.training.use_amp",
-            "no_use_amp": "model.training.use_amp",
         }
 
         for cli_key, config_path in cli_mapping.items():

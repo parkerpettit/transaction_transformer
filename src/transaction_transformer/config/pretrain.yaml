@@ -7,38 +7,38 @@ model:
   log_dir: "logs"
   
   field_transformer:
-    d_model: 64
+    d_model: 72
     n_heads: 8
     depth: 1
-    ffn_mult: 1
+    ffn_mult: 4
     dropout: 0.1
     layer_norm_eps: 1.0e-6
     norm_first: true
   
   sequence_transformer:
-    d_model: 64
-    n_heads: 8
-    depth: 2
-    ffn_mult: 1
+    d_model: 1080
+    n_heads: 12
+    depth: 12
+    ffn_mult: 4
     dropout: 0.1
     layer_norm_eps: 1.0e-6
     norm_first: true
   
   embedding:
-    emb_dim: 64
+    emb_dim: 72
     dropout: 0.1
     padding_idx: 0
     freq_encoding_L: 8
 
   head:
-    hidden_dim: 64
+    hidden_dim: 1080
     depth: 0 # 0 is a linear layer
     dropout: 0.1 # ignored if depth == 0
 
   
   training:
-    total_epochs: 3
-    batch_size: 256
+    total_epochs: 5
+    batch_size: 64
     learning_rate: 1.0e-4
     model_type: "mlm"  # "mlm" or "ar"
     p_field: 0.15
@@ -46,8 +46,8 @@ model:
     joint_timestamp_masking: true
     optimizer: "adamw"
     scheduler: "cosine"
-    early_stopping_patience: 5
-    max_batches_per_epoch: 50  # null for full epoch; integer for debug cap
+    early_stopping_patience: 3
+    max_batches_per_epoch: null  # null for full epoch; integer for debug cap
     num_workers: 4
     resume: false
     use_amp: true
@@ -68,7 +68,7 @@ model:
     ignore_idx: -100
 
 metrics:
-  run_name: debug-pretrain
+  run_name: pretrain
   run_id: null
   wandb_project: "transaction-transformer"
 

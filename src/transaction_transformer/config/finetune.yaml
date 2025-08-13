@@ -7,43 +7,43 @@ model:
   log_dir: "logs"
   
   field_transformer:
-    d_model: 64
+    d_model: 72
     n_heads: 8
     depth: 1
-    ffn_mult: 1
+    ffn_mult: 4
     dropout: 0.1
     layer_norm_eps: 1.0e-6
     norm_first: true
   
   sequence_transformer:
-    d_model: 64
-    n_heads: 8
-    depth: 2
-    ffn_mult: 1
+    d_model: 1080
+    n_heads: 12
+    depth: 12
+    ffn_mult: 4
     dropout: 0.1
     layer_norm_eps: 1.0e-6
     norm_first: true
   
   classification:
-    hidden_dim: 64
+    hidden_dim: 1080
     depth: 2  # Number of hidden layers in the MLP. 0 is a linear layer
     dropout: 0.1
     output_dim: 1
 
   embedding:
-    emb_dim: 64
+    emb_dim: 72
     dropout: 0.1
     padding_idx: 0
     freq_encoding_L: 8
   training:
-    total_epochs: 3
-    batch_size: 256 
+    total_epochs: 10
+    batch_size: 64 
     learning_rate: 5.0e-5
     model_type: "mlm"  # "mlm" or "ar"
     optimizer: "adamw"
     scheduler: "cosine"
-    early_stopping_patience: 5
-    max_batches_per_epoch: 50  # null for full epoch; integer for debug cap
+    early_stopping_patience: 3
+    max_batches_per_epoch: null  # null for full epoch; integer for debug cap
     num_workers: 4
     positive_weight: 9.08  # Weight for positive (fraud) class. if 1.0, calculate from data
     use_amp: true
@@ -79,7 +79,7 @@ model:
     ignore_idx: -100
 
 metrics:
-  run_name: debug-finetune
+  run_name: finetune
   run_id: null
   wandb_project: "transaction-transformer"
 
