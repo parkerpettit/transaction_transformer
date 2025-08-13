@@ -151,7 +151,7 @@ def main():
 
     # Init W&B (used to resolve artifacts below)
     run = init_wandb(
-        config, job_type="finetune", tags=[config.model.training.model_type, "finetune", f"use_amp={config.model.training.use_amp}"]
+        config, job_type="finetune", tags=[config.model.training.model_type, "finetune", f"use_amp={config.model.training.use_amp}"], run_id=config.metrics.run_id
     )
     dataset_dir = Path(run.use_artifact("preprocessed-card:latest").download())
     logger.info(f"Dataset directory: {dataset_dir}")
@@ -189,7 +189,7 @@ def main():
         logger.info("Loading weights from pretrained backbone %s", pretrained_dir / "backbone.pt")
         backbone = torch.load(pretrained_dir / "backbone.pt", map_location="cpu", weights_only=False)
         model.backbone.load_state_dict(backbone["state_dict"], strict=True)
-    
+
     device = torch.device(config.get_device())
     model.to(device)
 
