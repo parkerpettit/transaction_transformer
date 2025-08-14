@@ -42,7 +42,7 @@ model:
     model_type: "mlm"  # "mlm" or "ar"
     optimizer: "adamw"
     scheduler: "cosine"
-    early_stopping_patience: 3
+    early_stopping_patience: 10
     max_batches_per_epoch: null  # null for full epoch; integer for debug cap
     num_workers: 4
     positive_weight: 9.08  # Weight for positive (fraud) class. if 1.0, calculate from data
