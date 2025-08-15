@@ -5,6 +5,7 @@ model:
   pretrain_checkpoint_dir: "data/models/pretrained"
   finetune_checkpoint_dir: "data/models/finetuned"
   log_dir: "logs"
+  head_type: "lstm"
   
   field_transformer:
     d_model: 72
@@ -36,14 +37,14 @@ model:
     padding_idx: 0
     freq_encoding_L: 8
   training:
-    total_epochs: 10
-    batch_size: 512
+    total_epochs: 1
+    batch_size: 256
     learning_rate: 1.0e-4
     model_type: "mlm"  # "mlm" or "ar"
     optimizer: "adamw"
     scheduler: "cosine"
     early_stopping_patience: 10
-    max_batches_per_epoch: null  # null for full epoch; integer for debug cap
+    max_batches_per_epoch: 5  # null for full epoch; integer for debug cap
     num_workers: 4
     positive_weight: 9.08  # Weight for positive (fraud) class. if 1.0, calculate from data
     use_amp: true

@@ -30,6 +30,9 @@ from transaction_transformer.data.collator import FinetuneCollator
 import pandas as pd
 from transaction_transformer.utils.wandb_utils import init_wandb, download_artifact
 
+
+from lora_pytorch import LoRA
+
 logger = logging.getLogger(__name__)
 
 
@@ -140,6 +143,12 @@ def build_finetune_trainer(
 
 def main():
     """Main finetuning function."""
+    
+    def is_lora_param(name: str) -> bool:
+        return "lora_module" in name
+
+    def snapshot_named_params(mod):
+        return {n: p.detach().cpu().clone() for n, p in mod.named_parameters()}
 
     # Load configuration
     config_manager = ConfigManager(config_path="finetune.yaml")
@@ -171,8 +180,8 @@ def main():
     logger.info("Initializing model")
     model = FraudDetectionModel(config.model, schema)
     if config.model.training.resume:
-        pretrained_artifact = run.use_artifact(f"finetune-{config.model.training.model_type}:latest")
-        logger.info("Resuming from finetune artifact: %s", f"finetune-{config.model.training.model_type}:latest")
+        pretrained_artifact = run.use_artifact(f"finetune-{config.model.training.model_type}:v43")
+        logger.info("Resuming from finetune artifact: %s", f"finetune-{config.model.training.model_type}:v43")
         pretrained_dir = Path(pretrained_artifact.download())
 
         logger.info("Loading weights from finetune backbone %s", pretrained_dir / "backbone.pt")
@@ -190,17 +199,26 @@ def main():
         logger.info("Loading weights from pretrained backbone %s", pretrained_dir / "backbone.pt")
         backbone = torch.load(pretrained_dir / "backbone.pt", map_location="cpu", weights_only=False)
         model.backbone.load_state_dict(backbone["state_dict"], strict=True)
-
+    use_lora = False
     device = torch.device(config.get_device())
-    model.to(device)
+
+    if use_lora:
+        lora_model = LoRA.from_module(model, rank=5)
+    else:
+        lora_model = model
 
 
+    lora_model.to(device)
+    
     logger.info("Building finetune trainer")
-    trainer = build_finetune_trainer(model, train_ds, val_ds, schema, config, device)
-    logger.info("Finetune model has %d trainable parameters", sum(p.numel() for p in model.parameters() if p.requires_grad))
-    logger.info(f"Model head type: {type(model.head)}")
-    logger.info(f"Model head: {model.head}")
+    trainer = build_finetune_trainer(lora_model, train_ds, val_ds, schema, config, device) # type: ignore
+    trainable_names = [n for n, p in lora_model.named_parameters() if p.requires_grad]
+    logger.info("Trainable parameter names: %s", trainable_names)
+    logger.info("Finetune model has %d trainable parameters", sum(p.numel() for p in lora_model.parameters() if p.requires_grad))
+    logger.info("%d percent of parameters are trainable", sum(p.numel() for p in lora_model.parameters() if p.requires_grad) / sum(p.numel() for p in lora_model.parameters()) * 100)
+    print(f"Lora model: {lora_model}")
     logger.info(f"Using head type: {config.model.head_type}")
+
     num_epochs = config.model.training.total_epochs
     logger.info("Finetuning for %d epochs", num_epochs)
     logger.info("Using %s", f"use_amp={config.model.training.use_amp}")
@@ -209,6 +227,7 @@ def main():
     time_end = time.time()
     logger.info("Finetuning complete in %d seconds", time_end - time_start)
     logger.info("Finetuning complete")
+
 
 if __name__ == "__main__":
     main()

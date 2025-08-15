@@ -5,6 +5,7 @@ Abstract base trainer class for transaction transformer.
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional, List, Tuple
 import logging
+from numpy._core.numeric import False_
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -153,10 +154,11 @@ class BaseTrainer(ABC):
                     break
 
             # Save local exports (overwrite) and log a W&B artifact version for this epoch
-            backbone = getattr(self.model, "backbone", None)
-            head = getattr(self.model, "head", None)
+            backbone = getattr(self.model.module, "backbone", None)
+            head = getattr(self.model.module, "head", None)
             print(backbone)
             print(head)
+            is_lora = hasattr(self.model, "merge_lora")
             if backbone is not None and head is not None:
                 try:
                     self.checkpoint_manager.save_and_log_epoch(
@@ -168,6 +170,8 @@ class BaseTrainer(ABC):
                         wandb_run=self.metrics.wandb_run,
                         is_best=is_best,
                         model_type=self.config.model.training.model_type,
+                        head_type=self.config.model.head_type,
+                        is_lora=is_lora
                     )
                 except Exception as e:
                     self.logger.warning(f"[Trainer] Warning: failed to save/log epoch artifact: {e}")
@@ -175,6 +179,30 @@ class BaseTrainer(ABC):
             # Print progress
             self.logger.info(f"Epoch {self.current_epoch}/{num_epochs}")
             self.logger.info(f"Train Loss: {train_metrics.get('loss', 0):.4f}")
-            self.logger.info(f"Val Loss: {val_metrics.get('loss', 0):.4f}")
+            # self.logger.info(f"Val Loss: {val_metrics.get('loss', 0):.4f}")
             self.logger.info("-" * 50)
+        if hasattr(self.model, "merge_lora"):
+            final_model =self.model.merge_lora(inplace=True) # type: ignore
+            backbone = getattr(final_model, "backbone", None)
+            head = getattr(final_model, "head", None)
+            if hasattr(final_model, "merge_lora"):
+                is_lora = True
+            else:
+                is_lora = False
+            self.checkpoint_manager.save_and_log_epoch(
+                backbone=backbone, # type: ignore
+                head=head, # type: ignore
+                optimizer=self.optimizer,
+                scheduler=self.scheduler,
+                epoch=self.current_epoch,
+                wandb_run=self.metrics.wandb_run,
+                is_best=False,
+                model_type=self.config.model.training.model_type,
+                head_type=self.config.model.head_type,
+                is_lora=is_lora
+            )
+
+
+
+
         wandb.finish()

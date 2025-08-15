@@ -63,8 +63,8 @@ class FinetuneTrainer(BaseTrainer):
         cont_in = batch["cont"].to(self.device)  # (B, L, F)
         labels = batch["downstream_label"].to(self.device)  # (B,)
         logits = self.model(
-            cat=cat_in,
-            cont=cont_in,
+            cat_in,
+            cont_in,
         )  # (B,)
         return logits, labels
 

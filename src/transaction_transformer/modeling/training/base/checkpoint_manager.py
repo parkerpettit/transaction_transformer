@@ -47,11 +47,14 @@ class CheckpointManager:
         epoch: int,
         is_best: bool,
         model_type: str,
+        head_type: str,
+        is_lora: bool,
     ) -> None:
         if wandb_run is None:
             return
         base_name = f"{self.stage}-{model_type}"
-        artifact = wandb.Artifact(base_name, type="model", metadata={"model_type": model_type, "epoch": epoch})
+        description = f"Epoch {epoch} of {self.stage} training for {model_type} model with {head_type} head. Is LoRA: {is_lora}."
+        artifact = wandb.Artifact(base_name, type="model", metadata={"model_type": model_type, "epoch": epoch, "head_type": head_type, "is_lora": is_lora}, description=description)
         artifact.add_file(str(backbone_path), name="backbone.pt")
         artifact.add_file(
             str(head_path),
@@ -76,6 +79,8 @@ class CheckpointManager:
         aliases = ["latest"]
         if is_best:
             aliases.append("best")
+        
+        
         wandb_run.log_artifact(artifact, aliases=aliases)
 
     def save_and_log_epoch(
@@ -88,6 +93,8 @@ class CheckpointManager:
         wandb_run: Optional[Any],
         is_best: bool,
         model_type: str,
+        head_type: str,
+        is_lora: bool,
     ) -> None:
         """Overwrite local exports and log a versioned W&B artifact for this epoch."""
         # Overwrite local files to keep disk usage stable (last)
@@ -103,7 +110,9 @@ class CheckpointManager:
             optimizer_scheduler_path,
             epoch,
             is_best,
-            model_type=model_type
+            model_type=model_type,
+            head_type=head_type,
+            is_lora=is_lora
         )
 
     # -------------------------- loading helpers --------------------------- #
