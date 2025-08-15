@@ -29,13 +29,17 @@ class FraudDetectionModel(nn.Module):
         self.backbone = Backbone(config, schema)
 
         # Initialize the classification head
-
-        self.head = ClassificationHead(config)
-        # uncomment to use lstm head instead
-        # self.head = LSTMHead(config)
+        if config.head_type == "lstm":
+            self.head = LSTMHead(config)
+        else:
+            self.head = ClassificationHead(config)
 
         # Flag to control whether to freeze the embedding model
         self.freeze_embedding = config.freeze_embedding
+        if self.freeze_embedding:
+            for param in self.backbone.parameters():
+                param.requires_grad = False
+            print(f"Frozen {sum(p.numel() for p in self.backbone.parameters())} backbone parameters")
 
 
     def forward(self, cat: LongTensor, cont: Tensor, row_type: int = 0):

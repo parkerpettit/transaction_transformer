@@ -432,14 +432,15 @@ class MetricsTracker:
         fig, ax = plt.subplots(figsize=(8, 6))
         disp = ConfusionMatrixDisplay(cm, display_labels=self.class_names)
         disp.plot(ax=ax, cmap="Blues", values_format="d")
-        ax.set_title(f"Confusion Matrix @ FPR {target_fpr:.3f}%")
-
+        ax.set_title(f"Confusion Matrix @ Target FPR {target_fpr:.4f}%")
+        actual_fpr = cm[0, 1] / (cm[0, 1] + cm[0, 0]) * 100
+        
         # Add precision, recall, and f1 underneath the confusion matrix
         metrics_text = (
-            f"Precision: {precision:.3f} | Recall: {recall:.3f} | F1: {f1:.3f}"
+            f"Precision: {precision:.4f} | Recall: {recall:.4f} | F1: {f1:.4f} | Actual FPR: {actual_fpr:.4f}%"
         )
         # Place the metrics text below the confusion matrix
-        fig.text(0.45, 0.0, metrics_text, ha="center", va="bottom", fontsize=10)
+        fig.text(0.46, 0.0, metrics_text, ha="center", va="bottom", fontsize=10)
 
         # Create unique key for each confusion matrix based on target FPR with % symbol
         cm_key = f"confusion_matrix_fpr_{target_fpr:.3f}%".replace(".", "_").replace(

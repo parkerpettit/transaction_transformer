@@ -1,7 +1,7 @@
 model:
   mode: "finetune"
   row_types: 1
-  freeze_embedding: false
+  freeze_embedding: true
   pretrain_checkpoint_dir: "data/models/pretrained"
   finetune_checkpoint_dir: "data/models/finetuned"
   log_dir: "logs"
@@ -37,7 +37,7 @@ model:
     freq_encoding_L: 8
   training:
     total_epochs: 10
-    batch_size: 64 
+    batch_size: 512
     learning_rate: 1.0e-4
     model_type: "mlm"  # "mlm" or "ar"
     optimizer: "adamw"

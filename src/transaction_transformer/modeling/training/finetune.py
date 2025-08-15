@@ -151,7 +151,7 @@ def main():
 
     # Init W&B (used to resolve artifacts below)
     run = init_wandb(
-        config, job_type="finetune", tags=[config.model.training.model_type, "finetune", f"use_amp={config.model.training.use_amp}"], run_id=config.metrics.run_id
+        config, job_type="finetune", tags=[config.model.training.model_type, "finetune", f"use_amp={config.model.training.use_amp}", f"head_type={config.model.head_type}"], run_id=config.metrics.run_id, 
     )
     run.use_artifact("preprocessed-card:latest")
     dataset_dir = Path(run.use_artifact("preprocessed-card:latest").download())
@@ -198,6 +198,9 @@ def main():
     logger.info("Building finetune trainer")
     trainer = build_finetune_trainer(model, train_ds, val_ds, schema, config, device)
     logger.info("Finetune model has %d trainable parameters", sum(p.numel() for p in model.parameters() if p.requires_grad))
+    logger.info(f"Model head type: {type(model.head)}")
+    logger.info(f"Model head: {model.head}")
+    logger.info(f"Using head type: {config.model.head_type}")
     num_epochs = config.model.training.total_epochs
     logger.info("Finetuning for %d epochs", num_epochs)
     logger.info("Using %s", f"use_amp={config.model.training.use_amp}")

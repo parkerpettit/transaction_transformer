@@ -136,7 +136,7 @@ class ModelConfig:
 
     # Model architecture
     mode: str = "pretrain"  # "pretrain", "finetune"
-
+    head_type: str = "mlp"  # "mlp", "lstm"
     # Transformer configurations
     field_transformer: TransformerConfig = field(default_factory=TransformerConfig)
 
@@ -355,6 +355,12 @@ class ConfigManager:
             action="store_false",
             help="Do not use automatic mixed precision",
         )
+        parser.add_argument(
+            "--head-type",
+            type=str,
+            choices=["mlp", "lstm"],
+            help="Head type (mlp or lstm)",
+        )
         parser.set_defaults(use_amp=None)
 
         return parser.parse_args()
@@ -391,6 +397,7 @@ class ConfigManager:
             "run_name": "metrics.run_name",
             "seed": "metrics.seed",
             "use_amp": "model.training.use_amp",
+            "head_type": "model.head_type",
         }
 
         for cli_key, config_path in cli_mapping.items():

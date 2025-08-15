@@ -37,7 +37,7 @@ class BaseTrainer(ABC):
         self.optimizer = optimizer
         self.scheduler = scheduler
         self.scaler = torch.amp.GradScaler(enabled=config.model.training.use_amp) # type: ignore
-        self.autocast = torch.autocast(device_type=self.device.type, enabled=config.model.training.use_amp, dtype=torch.bfloat16)
+        self.autocast = torch.autocast(device_type=self.device.type, enabled=config.model.training.use_amp)
         self.schema = schema
         self.config = config
         self.logger = logging.getLogger(__name__)
