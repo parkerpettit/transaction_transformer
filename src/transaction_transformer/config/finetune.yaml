@@ -25,7 +25,7 @@ model:
     norm_first: true
   
   classification:
-    hidden_dim: 1080
+    hidden_dim: 512
     depth: 2  # Number of hidden layers in the MLP. 0 is a linear layer
     dropout: 0.1
     output_dim: 1
@@ -38,7 +38,7 @@ model:
   training:
     total_epochs: 10
     batch_size: 64 
-    learning_rate: 5.0e-5
+    learning_rate: 1.0e-4
     model_type: "mlm"  # "mlm" or "ar"
     optimizer: "adamw"
     scheduler: "cosine"

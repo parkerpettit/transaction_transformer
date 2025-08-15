@@ -197,7 +197,7 @@ def main():
 
     logger.info("Building finetune trainer")
     trainer = build_finetune_trainer(model, train_ds, val_ds, schema, config, device)
-    
+    logger.info("Finetune model has %d trainable parameters", sum(p.numel() for p in model.parameters() if p.requires_grad))
     num_epochs = config.model.training.total_epochs
     logger.info("Finetuning for %d epochs", num_epochs)
     logger.info("Using %s", f"use_amp={config.model.training.use_amp}")
