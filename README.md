@@ -53,7 +53,7 @@ All defaults live in YAML; CLI is only for quick overrides.
 
 Important toggles (edit YAML):
 - `metrics.wandb`: true/false, `metrics.wandb_project`: "transaction-transformer", `metrics.wandb_entity`: null or your team
-- `model.training.model_type`: "mlm" or "ar"
+- `model.training.model-type`: "mlm" or "ar"
 - `model.data.use_local_inputs`: false uses W&B artifacts; true uses local paths
 - `model.training.max_batches_per_epoch`: set a small int (e.g., 1) for ~1‑minute sanity runs
 - Special IDs: `padding_idx=0`, `mask_idx=1`, `unk_idx=2`, `ignore_idx=-100`
@@ -70,12 +70,12 @@ pretrain
 Quick overrides (examples supported by the CLI):
 ```bash
 # Choose objective and make a short run
-pretrain --config pretrain.yaml --model_type ar --batch-size 32 --total-epochs 1
+pretrain --config pretrain.yaml --model-type ar --batch-size 32 --total-epochs 1
 
 # Equivalent module form
 python -m transaction_transformer.modeling.training.pretrain \
   --config pretrain.yaml \
-  --model_type mlm \
+  --model-type mlm \
   --batch-size 32 \
   --total-epochs 1
 ```
