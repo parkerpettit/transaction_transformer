@@ -36,16 +36,16 @@ model:
     padding_idx: 0
     freq_encoding_L: 8
   training:
-    total_epochs: 1
+    total_epochs: 10
     batch_size: 256
     learning_rate: 1.0e-4
     model_type: "mlm"  # "mlm" or "ar"
-    early_stopping_patience: 10
-    max_batches_per_epoch: 5  # null for full epoch; integer for debug cap
+    early_stopping_patience: 10 # num epochs without improvement before stopping
+    max_batches_per_epoch: null  # null for full epoch; integer for debug cap
     num_workers: 4
-    positive_weight: 9.08  # Weight for positive (fraud) class. if 1.0, calculate from data
     use_amp: true
     resume: false
+    positive_weight: 9.08  # Weight for positive (fraud) class. if 1.0, calculate from data
     #   Label statistics from full_processed.pt with include_all_fraud: true
     #   Positive samples: 20677
     #   Negative samples: 1704227

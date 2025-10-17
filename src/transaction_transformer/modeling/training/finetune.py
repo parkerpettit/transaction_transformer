@@ -190,8 +190,8 @@ def main():
     logger.info("Initializing model")
     model = FraudDetectionModel(config.model, schema)
     if config.model.training.resume:
-        pretrained_artifact = run.use_artifact(f"finetune-{config.model.training.model_type}:v43")
-        logger.info("Resuming from finetune artifact: %s", f"finetune-{config.model.training.model_type}:v43")
+        pretrained_artifact = run.use_artifact(f"finetune-{config.model.training.model_type}:latest")
+        logger.info("Resuming from finetune artifact: %s", f"finetune-{config.model.training.model_type}:latest")
         pretrained_dir = Path(pretrained_artifact.download())
 
         logger.info("Loading weights from finetune backbone %s", pretrained_dir / "backbone.pt")
