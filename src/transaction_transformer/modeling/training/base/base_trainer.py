@@ -154,8 +154,8 @@ class BaseTrainer(ABC):
                     break
 
             # Save local exports (overwrite) and log a W&B artifact version for this epoch
-            backbone = getattr(self.model.module, "backbone", None)
-            head = getattr(self.model.module, "head", None)
+            backbone = getattr(self.model.modules, "backbone", None)
+            head = getattr(self.model.modules, "head", None)
             print(backbone)
             print(head)
             is_lora = hasattr(self.model, "merge_lora")
