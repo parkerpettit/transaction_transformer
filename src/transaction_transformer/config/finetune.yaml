@@ -77,4 +77,3 @@ metrics:
   run_id: null
   wandb_project: "transaction-transformer"
 
-#TODO go through and remove the parameters that are not used

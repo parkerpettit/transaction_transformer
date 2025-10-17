@@ -98,7 +98,7 @@ class DataConfig:
         "data/raw/card_transaction.v1.csv"  # local fallback/raw upload source
     )
     # Artifact-first behavior (download ':latest' each run unless overridden)
-    use_local_inputs: bool = False
+    # use_local_inputs: bool = False - not entirely functional
     raw_artifact_name: Optional[str] = "raw-card-transactions"
     preprocessed_artifact_name: Optional[str] = "preprocessed-card"
 

@@ -49,7 +49,6 @@ model:
     use_amp: true
   data:
     preprocessed_path: "data/processed/"
-    use_local_inputs: false  # if true, skip artifact download and use local files
     raw_csv_path: "data/raw/card_transaction.v1.csv"
     raw_artifact_name: "raw-card-transactions"
     preprocessed_artifact_name: "preprocessed-card"

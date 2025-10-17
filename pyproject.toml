@@ -14,7 +14,7 @@ requires-python = ">=3.8"
 dependencies = [
     "torch~=2.8.0",
     "pandas~=2.3.1",
-    "numpy~=2.3.2",
+    "numpy~=2.0.2",
     "scikit-learn~=1.7.1",
     "wandb~=0.21.1",
     "pyyaml~=6.0.2",
