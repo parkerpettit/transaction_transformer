@@ -4,7 +4,6 @@ model:
   freeze_embedding: true
   pretrain_checkpoint_dir: "data/models/pretrained"
   finetune_checkpoint_dir: "data/models/finetuned"
-  log_dir: "logs"
   head_type: "lstm"
   
   field_transformer:
@@ -41,18 +40,12 @@ model:
     batch_size: 256
     learning_rate: 1.0e-4
     model_type: "mlm"  # "mlm" or "ar"
-    optimizer: "adamw"
-    scheduler: "cosine"
     early_stopping_patience: 10
     max_batches_per_epoch: 5  # null for full epoch; integer for debug cap
     num_workers: 4
     positive_weight: 9.08  # Weight for positive (fraud) class. if 1.0, calculate from data
     use_amp: true
     resume: false
-    from_scratch: false
-    # Prefer W&B artifact; if omitted, code will auto-discover the latest pretrain artifact in this project.
-    # You can still provide a local path to override.
-    pretrained_backbone_path: null
     #   Label statistics from full_processed.pt with include_all_fraud: true
     #   Positive samples: 20677
     #   Negative samples: 1704227

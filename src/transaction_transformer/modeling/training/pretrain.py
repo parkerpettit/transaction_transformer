@@ -170,10 +170,20 @@ def main():
     log_path = _setup_logging("pretrain")
     os.environ["TT_PRETRAIN_LOG_FILE"] = str(log_path)
 
-    # Init W&B (used to resolve artifacts below)
+    # Init W&B (used to resolve artifacts below) and seed RNGs
     run = init_wandb(
         config, job_type="pretrain", tags=[config.model.training.model_type, "pretrain", f"use_amp={config.model.training.use_amp}"], run_id=config.metrics.run_id
     )
+    try:
+        import random
+        import numpy as np
+        torch.manual_seed(config.metrics.seed)
+        random.seed(config.metrics.seed)
+        np.random.seed(config.metrics.seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(config.metrics.seed)
+    except Exception:
+        logger.debug("Seeding failed; continuing without deterministic RNGs", exc_info=True)
     run.use_artifact("preprocessed-card:latest")
     dataset_dir = Path(run.use_artifact("preprocessed-card:latest").download())
     logger.info(f"Dataset directory: {dataset_dir}")

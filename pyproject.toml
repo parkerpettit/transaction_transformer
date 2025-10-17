@@ -20,16 +20,9 @@ dependencies = [
     "pyyaml~=6.0.2",
     "tqdm~=4.67.1",
     "pyarrow~=21.0.0",
-    "fastparquet~=2024.11.0"
+    "lora_pytorch~=0.1.0"
 ]
 
-[project.optional-dependencies]
-dev = [
-    "pytest==8.4.1",
-    "black==25.1.0",
-    "flake8==7.3.0",
-    "mypy==1.17.1"
-]
 
 [project.scripts]
 pretrain = "transaction_transformer.modeling.training.pretrain:main"

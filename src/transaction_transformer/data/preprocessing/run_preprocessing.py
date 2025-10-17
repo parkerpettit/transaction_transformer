@@ -97,8 +97,7 @@ def main():
         cfg, job_type="preprocess", tags=["data"]
     )  # may be None when disabled
     logger.info(
-        "Config loaded | wandb_enabled=%s | project=%s",
-        bool(cfg.metrics.wandb),
+        "Config loaded | project=%s",
         cfg.metrics.wandb_project,
     )
 

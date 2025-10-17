@@ -88,10 +88,20 @@ def main():
     config = config_manager.config
     print("Configuration loaded")
 
-    # Init W&B (used to resolve artifacts below)
+    # Init W&B (used to resolve artifacts below) and seed RNGs
     run = init_wandb(
         config, job_type="evaluate", tags=[config.model.training.model_type, "evaluate", f"use_amp={config.model.training.use_amp}"]
     )
+    try:
+        import random
+        import numpy as np
+        torch.manual_seed(config.metrics.seed)
+        random.seed(config.metrics.seed)
+        np.random.seed(config.metrics.seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(config.metrics.seed)
+    except Exception:
+        logging.getLogger(__name__).debug("Seeding failed; continuing without deterministic RNGs", exc_info=True)
 
     # Load preprocessed data: artifact-first to data/processed, fallback to local
     processed_dir = Path(config.model.data.preprocessed_path)

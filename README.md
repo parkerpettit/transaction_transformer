@@ -51,12 +51,14 @@ All defaults live in YAML; CLI is only for quick overrides.
 - Pretrain YAML: `src/transaction_transformer/config/pretrain.yaml`
 - Finetune YAML: `src/transaction_transformer/config/finetune.yaml`
 
-Important toggles (edit YAML):
-- `metrics.wandb`: true/false, `metrics.wandb_project`: "transaction-transformer", `metrics.wandb_entity`: null or your team
-- `model.training.model-type`: "mlm" or "ar"
-- `model.data.use_local_inputs`: false uses W&B artifacts; true uses local paths
-- `model.training.max_batches_per_epoch`: set a small int (e.g., 1) for ~1‑minute sanity runs
-- Special IDs: `padding_idx=0`, `mask_idx=1`, `unk_idx=2`, `ignore_idx=-100`
+Supported config keys (edit YAML):
+- `metrics.wandb_project`, `metrics.run_name`, `metrics.run_id`, `metrics.seed`
+- `model.mode` (pretrain|finetune), `model.head_type` (mlp|lstm)
+- Transformers: `model.field_transformer.*`, `model.sequence_transformer.*`
+- Embedding: `model.embedding.*` (emb_dim must match field d_model)
+- Classification head: `model.classification.*`
+- Training: `model.training.{model_type,batch_size,total_epochs,learning_rate,p_field,p_row,use_amp,num_workers,early_stopping_patience,max_batches_per_epoch,device,positive_weight}`
+- Data: `model.data.{use_local_inputs,raw_csv_path,raw_artifact_name,preprocessed_artifact_name,window,stride,num_bins,group_by,include_all_fraud,padding_idx,mask_idx,unk_idx,ignore_idx}`
 
 Note on `--config`: when provided to scripts, it can be a filename like `pretrain.yaml` (resolved relative to `src/transaction_transformer/config/`), or an absolute/relative filesystem path.
 
@@ -80,7 +82,7 @@ python -m transaction_transformer.modeling.training.pretrain \
   --total-epochs 1
 ```
 
-By default, pretraining consumes the LEGIT splits. Artifacts of the form `pretrained-backbone-<mlm|ar>` are versioned; logs are stored under `logs/pretrain/` and attached to the run.
+By default, pretraining consumes the LEGIT splits. Artifacts are versioned; logs are stored under `logs/pretrain/`.
 
 ## Fine‑tuning
 
@@ -90,7 +92,7 @@ finetune
 ```
 
 Notes
-- If `from_scratch: false` (recommended), the script auto‑pulls `pretrained-backbone-<mlm|ar>:best` from W&B (unless `use_local_inputs: true`, in which case it looks for a local export under `model.pretrain_checkpoint_dir`).
+- The script pulls `pretrain-<mlm|ar>:latest` for finetuning by default. Set `use_local_inputs: true` to use local files.
 - Class imbalance is handled via `positive_weight` (YAML). If set to 1.0, it is computed from labels.
 
 CLI examples supported:
@@ -131,6 +133,5 @@ transaction_transformer/
 
 ## Weights & Biases
 - Set `WANDB_API_KEY` in your environment and `wandb login` once
-- Disable by setting `metrics.wandb: false` in YAML
 - Artifacts used by default when `use_local_inputs: false` (recommended)
 

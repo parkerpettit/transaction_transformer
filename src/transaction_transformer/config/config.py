@@ -66,11 +66,8 @@ class TrainingConfig:
     # MLM-specific parameters
     p_field: float = 0.15  # Field masking probability
     p_row: float = 0.10  # Row masking probability
-    joint_timestamp_masking: bool = True
 
-    # Optimization
-    optimizer: str = "adamw"  # "adamw", "adam", "sgd"
-    scheduler: str = "cosine"  # "cosine", "linear", "none"
+    # Mixed precision
     use_amp: bool = False
 
 
@@ -89,13 +86,6 @@ class TrainingConfig:
 
     # Checkpoint/resume behavior
     resume: bool = False
-    resume_path: Optional[str] = None
-    # Finetune-only testing path to skip pretrained backbone
-    from_scratch: bool = False
-    # Path to pretrained backbone export to initialize finetuning
-    pretrained_backbone_path: Optional[str] = None
-    # Optional W&B artifact ref for pretrained backbone (e.g., "entity/project/pretrain-<runid>:best")
-    pretrained_backbone_artifact: Optional[str] = None
 
 
 @dataclass
@@ -156,8 +146,6 @@ class ModelConfig:
 
     # Model parameters
     freeze_embedding: bool = False
-    emb_dropout: float = 0.1
-    clf_dropout: float = 0.1
 
     # Training configuration
     training: TrainingConfig = field(default_factory=TrainingConfig)
@@ -168,7 +156,6 @@ class ModelConfig:
     # Paths
     pretrain_checkpoint_dir: str = "data/models/pretrained"
     finetune_checkpoint_dir: str = "data/models/finetuned"
-    log_dir: str = "logs"
 
 
 @dataclass
@@ -179,16 +166,10 @@ class MetricsConfig:
     run_id: Optional[str] = None
 
     # Logging
-    wandb: bool = True
     wandb_project: str = "feature-predictor"
 
-    # Reproducibility
+    # Reproducibility (stored in metadata)
     seed: int = 42
-    deterministic: bool = False
-
-    # Logging frequency
-    log_gradients: bool = False
-    log_parameters: bool = False
 
 
 @dataclass
@@ -321,7 +302,6 @@ class ConfigManager:
         parser.add_argument("--seq-depth", type=int, help="Sequence transformer depth")
 
         # Data parameters
-        parser.add_argument("--data-dir", type=str, help="Data directory")
         parser.add_argument("--window", type=int, help="Sequence window size")
         parser.add_argument("--stride", type=int, help="Stride between windows")
         parser.add_argument(
@@ -333,9 +313,6 @@ class ConfigManager:
         parser.add_argument("--p-row", type=float, help="Row masking probability")
 
         # Checkpoint and logging
-        parser.add_argument("--checkpoint-dir", type=str, help="Checkpoint directory")
-        parser.add_argument("--resume-from", type=str, help="Resume from checkpoint")
-        parser.add_argument("--log-dir", type=str, help="Logging directory")
 
         # Experiment tracking
         parser.add_argument("--run-name", type=str, help="Run name")
@@ -374,7 +351,6 @@ class ConfigManager:
 
         # Map CLI args to config structure
         cli_mapping = {
-            "mode": "model.mode",
             "model_type": "model.training.model_type",
             "batch_size": "model.training.batch_size",
             "learning_rate": "model.training.learning_rate",
@@ -391,9 +367,6 @@ class ConfigManager:
             "num_bins": "model.data.num_bins",
             "p_field": "model.training.p_field",
             "p_row": "model.training.p_row",
-            "pretrain_checkpoint_dir": "model.pretrain_checkpoint_dir",
-            "finetune_checkpoint_dir": "model.finetune_checkpoint_dir",
-            "log_dir": "model.log_dir",
             "run_name": "metrics.run_name",
             "seed": "metrics.seed",
             "use_amp": "model.training.use_amp",
